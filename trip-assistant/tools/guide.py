@@ -5,6 +5,7 @@
 from pathlib import Path
 from typing import Dict, List
 
+from rag.local_retriever import LocalMarkdownRetriever
 from tools.registry import BaseTool
 
 
@@ -46,40 +47,23 @@ class GuideTool(BaseTool):
 
     def _load_documents(self) -> List[Dict]:
         """加载本地攻略文档"""
-        documents_dir = Path(__file__).resolve().parents[1] / "rag" / "documents" / "guides"
-        documents = []
-
-        if not documents_dir.exists():
-            return documents
-
-        for filepath in sorted(documents_dir.glob("*.md")):
-            documents.append({
-                "content": filepath.read_text(encoding="utf-8"),
-                "source": str(filepath.relative_to(Path(__file__).resolve().parents[1])),
-                "type": "guide",
-            })
-        return documents
+        project_dir = Path(__file__).resolve().parents[1]
+        documents_dir = project_dir / "rag" / "documents" / "guides"
+        return LocalMarkdownRetriever().load_documents(
+            directory=documents_dir,
+            document_type="guide",
+            base_dir=project_dir,
+        )
 
     def _search_documents(self, query: str, destination: str, documents: List[Dict]) -> List[Dict]:
         """基于目的地和关键词检索攻略文档"""
-        if not documents:
-            return []
-
-        terms = self._extract_terms(query, destination)
-        scored_results = []
-
-        for document in documents:
-            content = document["content"]
-            score = sum(1 for term in terms if term and term in content)
-            scored_results.append({
-                "content": self._build_excerpt(content, terms),
-                "source": document["source"],
-                "type": document["type"],
-                "score": score,
-            })
-
-        scored_results.sort(key=lambda item: item["score"], reverse=True)
-        return scored_results[:3]
+        return LocalMarkdownRetriever().search(
+            query=query,
+            documents=documents,
+            terms=self._extract_terms(query, destination),
+            top_k=3,
+            max_excerpt_lines=8,
+        )
 
     def _extract_terms(self, query: str, destination: str) -> List[str]:
         """提取攻略查询关键词"""
@@ -96,13 +80,6 @@ class GuideTool(BaseTool):
                 terms.append(keyword)
         return terms or [query]
 
-    def _build_excerpt(self, content: str, terms: List[str]) -> str:
-        """构建攻略摘要片段"""
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        matched_lines = [line for line in lines if any(term in line for term in terms)]
-        excerpt_lines = matched_lines[:8] if matched_lines else lines[:8]
-        return "\n".join(excerpt_lines)
-
     def _build_answer(self, query: str, destination: str, results: List[Dict]) -> str:
         """根据检索结果构建攻略回答"""
         if not results:
@@ -110,4 +87,7 @@ class GuideTool(BaseTool):
             return f"暂未检索到{target}的本地攻略文档，后续可接入更多攻略数据。"
 
         target = destination or "相关目的地"
-        return f"根据本地攻略文档，为您检索到{target}相关建议：\n{results[0]['content']}"
+        best_result = results[0]
+        title = best_result.get("title") or "本地攻略文档"
+        excerpt = best_result.get("excerpt") or best_result.get("content", "")
+        return f"根据本地攻略文档《{title}》，为您检索到{target}相关建议：\n{excerpt}"

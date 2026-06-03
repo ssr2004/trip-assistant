@@ -155,8 +155,7 @@ class ResponseBuilder:
         if sources:
             lines.append("\n资料来源：")
             for source in sources[:3]:
-                source_name = source.get("source", "本地政策文档")
-                lines.append(f"- {source_name}")
+                lines.append(self._format_source_reference(source, "本地政策文档"))
         return "\n".join(lines)
 
     def _format_single_tool_response(self, title: str, task_results: List[Dict], tool_name: str) -> str:
@@ -190,6 +189,14 @@ class ResponseBuilder:
             else:
                 lines.append(f"- {task_name}：执行失败，原因是{result.get('error')}。")
         return "\n".join(lines)
+
+    def _format_source_reference(self, source: Dict, default_source: str) -> str:
+        """格式化结构化RAG来源，优先展示标题和来源路径"""
+        title = source.get("title")
+        source_name = source.get("source") or default_source
+        if title:
+            return f"- {title}：{source_name}"
+        return f"- {source_name}"
 
     def _format_memory_preference_note(self, memory_context: Dict) -> Optional[str]:
         """格式化长期记忆偏好说明，仅用于完整旅行规划"""
@@ -346,7 +353,7 @@ class ResponseBuilder:
         if sources:
             lines.append("资料来源：")
             for source in sources[:3]:
-                lines.append(f"- {source.get('source', '本地攻略文档')}")
+                lines.append(self._format_source_reference(source, "本地攻略文档"))
         return lines
 
     def _format_errors(self, task_results: List[Dict]) -> List[str]:
