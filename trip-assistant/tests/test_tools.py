@@ -133,6 +133,7 @@ async def test_itinerary_tool_generates_itinerary():
     assert result["data"]["destination"] == "杭州"
     assert len(result["data"]["itinerary"]) == 3
     assert result["data"]["budget_summary"]["input_budget"] == 3000
+    assert result["data"]["context_summary"]["flight_count"] == 0
 
 
 @pytest.mark.asyncio

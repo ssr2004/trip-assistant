@@ -38,6 +38,7 @@ async def test_itinerary_tool_defaults_to_template_generation():
 
     assert result["success"] is True
     assert result["data"]["generation_mode"] == "template"
+    assert result["data"]["context_summary"]["flight_count"] == 0
     assert result["metadata"]["source"] == "template_itinerary_generator"
     assert len(result["data"]["itinerary"]) == 3
     assert llm_client.calls == 0
@@ -102,6 +103,7 @@ async def test_itinerary_tool_uses_valid_llm_plan():
     assert result["metadata"]["source"] == "llm_itinerary_generator"
     assert result["data"]["summary"] == "已为您生成从郑州出发前往杭州的3天慢节奏行程。"
     assert result["data"]["itinerary"][0]["title"] == "抵达杭州与西湖慢游"
+    assert result["data"]["context_summary"]["hotel_count"] == 0
     assert "中档酒店" in result["data"]["budget_summary"]["budget_note"]
     assert llm_client.calls == 1
     assert llm_client.last_request.response_format == "json_object"
@@ -128,6 +130,56 @@ async def test_itinerary_tool_supports_markdown_json_from_llm():
     assert result["data"]["generation_mode"] == "llm"
     assert len(result["data"]["itinerary"]) == 2
     assert result["data"]["itinerary"][1]["title"] == "鼓浪屿慢游"
+
+
+@pytest.mark.asyncio
+async def test_itinerary_tool_summarizes_injected_context():
+    """行程工具可以汇总前置任务注入的上下文"""
+    tool = ItineraryTool()
+    context = {
+        "flights": [{"flight_no": "CZ123"}, {"flight_no": "HU456"}],
+        "hotels": [{"name": "西湖酒店"}],
+        "attractions": [{"name": "西湖"}, {"name": "灵隐寺"}, {"name": "西溪湿地"}],
+        "guide": {"answer": "杭州三天行程可围绕西湖和灵隐寺安排。"},
+        "errors": {},
+    }
+
+    result = await tool.execute(destination="杭州", duration=3, context=context)
+
+    context_summary = result["data"]["context_summary"]
+    assert context_summary["flight_count"] == 2
+    assert context_summary["hotel_count"] == 1
+    assert context_summary["attraction_count"] == 3
+    assert context_summary["has_guide"] is True
+
+
+@pytest.mark.asyncio
+async def test_itinerary_tool_passes_context_to_llm_prompt():
+    """启用LLM时将前置任务上下文传入提示词"""
+    llm_content = """
+    {
+      "itinerary": [
+        {"day": 1, "title": "参考候选结果游杭州", "activities": ["西湖"], "notes": "参考候选景点安排。"}
+      ],
+      "summary": "参考前置工具结果生成的行程。",
+      "budget_tips": "参考候选酒店控制预算。"
+    }
+    """
+    llm_client = FakeLLMClient(content=llm_content)
+    tool = ItineraryTool(llm_client=llm_client, llm_enabled=True)
+    context = {
+        "flights": [{"flight_no": "CZ123"}],
+        "hotels": [{"name": "西湖酒店"}],
+        "attractions": [{"name": "西湖"}],
+        "guide": {"answer": "杭州攻略"},
+    }
+
+    result = await tool.execute(destination="杭州", duration=1, context=context)
+
+    assert result["data"]["generation_mode"] == "llm"
+    assert result["data"]["context_summary"]["flight_count"] == 1
+    assert "CZ123" in llm_client.last_request.messages[1].content
+    assert "西湖酒店" in llm_client.last_request.messages[1].content
 
 
 @pytest.mark.asyncio

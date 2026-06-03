@@ -94,36 +94,52 @@ class TravelAgent:
         tasks = state.get("tasks", [])
         results = []
 
+        result_by_task_id = {}
+
         for task in sorted(tasks, key=lambda item: item.get("priority", 99)):
             task_type = task.get("task_type", "tool_call")
 
             if task_type == "ask_user":
-                results.append(self._build_internal_result(task, task.get("params", {})))
+                task_result = self._build_internal_result(task, task.get("params", {}))
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
                 continue
 
             if task_type == "recommend_destination":
-                results.append(self._build_internal_result(task, self._recommend_destinations(task)))
+                task_result = self._build_internal_result(task, self._recommend_destinations(task))
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
                 continue
 
             tool_name = task.get("tool")
-            params = task.get("params", {})
+            params = self._inject_dependency_context(
+                task=task,
+                params=task.get("params", {}),
+                result_by_task_id=result_by_task_id,
+            )
 
             if not tool_name:
-                results.append(self._build_error_result(task, "任务缺少工具名称"))
+                task_result = self._build_error_result(task, "任务缺少工具名称")
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
                 continue
 
             try:
                 result = await self.tool_registry.execute(tool_name, params)
                 tool_success = result.get("success", True) if isinstance(result, dict) else True
                 tool_error = result.get("error") if isinstance(result, dict) else None
-                results.append({
+                task_result = {
                     "task": task,
                     "success": tool_success,
                     "result": result,
                     "error": tool_error,
-                })
+                }
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
             except Exception as exc:
-                results.append(self._build_error_result(task, str(exc)))
+                task_result = self._build_error_result(task, str(exc))
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
 
         return {"task_results": results}
 
@@ -159,6 +175,91 @@ class TravelAgent:
             "result": None,
             "error": error,
         }
+
+    def _index_task_result(self, task_result: Dict, result_by_task_id: Dict[str, Dict]) -> None:
+        """按task_id索引任务结果，供后续依赖任务读取"""
+        task = task_result.get("task", {})
+        task_id = task.get("task_id")
+        if task_id:
+            result_by_task_id[task_id] = task_result
+
+    def _inject_dependency_context(
+        self,
+        task: Dict,
+        params: Dict,
+        result_by_task_id: Dict[str, Dict],
+    ) -> Dict:
+        """将depends_on声明的前置任务结果注入到当前工具参数"""
+        depends_on = task.get("depends_on", []) or []
+        if not depends_on:
+            return params or {}
+
+        merged_params = dict(params or {})
+        dependency_context = self._build_dependency_context(depends_on, result_by_task_id)
+        existing_context = merged_params.get("context")
+        if isinstance(existing_context, dict):
+            dependency_context = {**dependency_context, **existing_context}
+        merged_params["context"] = dependency_context
+        return merged_params
+
+    def _build_dependency_context(
+        self,
+        depends_on: List[str],
+        result_by_task_id: Dict[str, Dict],
+    ) -> Dict:
+        """构建供后续任务使用的依赖上下文"""
+        context = {
+            "flights": [],
+            "hotels": [],
+            "attractions": [],
+            "guide": None,
+            "raw_results": {},
+            "errors": {},
+        }
+
+        for dependency in depends_on:
+            task_result = result_by_task_id.get(dependency)
+            if not task_result:
+                context["errors"][dependency] = "依赖任务尚未执行或不存在"
+                continue
+
+            task = task_result.get("task", {})
+            tool_name = task.get("tool")
+            context["raw_results"][dependency] = {
+                "task": task,
+                "success": task_result.get("success", False),
+                "result": task_result.get("result"),
+                "error": task_result.get("error"),
+            }
+
+            if not task_result.get("success", False):
+                context["errors"][dependency] = task_result.get("error") or "依赖任务执行失败"
+
+            data = self._extract_result_data(task_result)
+            if tool_name == "search_flights":
+                context["flights"] = self._safe_list(data, "flights")
+            elif tool_name == "search_hotels":
+                context["hotels"] = self._safe_list(data, "hotels")
+            elif tool_name == "search_attractions":
+                context["attractions"] = self._safe_list(data, "attractions")
+            elif tool_name == "retrieve_guide":
+                context["guide"] = data if isinstance(data, dict) else None
+
+        return context
+
+    def _extract_result_data(self, task_result: Dict) -> Any:
+        """提取标准工具结果中的data，兼容内部任务结果"""
+        result = task_result.get("result")
+        if isinstance(result, dict) and "data" in result:
+            return result.get("data")
+        return result
+
+    def _safe_list(self, data: Any, key: str) -> List:
+        """从工具data中安全提取列表字段"""
+        if not isinstance(data, dict):
+            return []
+        value = data.get(key, [])
+        return value if isinstance(value, list) else []
 
     def _recommend_destinations(self, task: Dict) -> Dict:
         """目的地推荐占位实现，后续接入LLM和真实数据"""

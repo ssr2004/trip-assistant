@@ -41,6 +41,7 @@ class ItineraryTool(BaseTool):
         budget: float = None,
         travelers: int = None,
         preferences: List[str] = None,
+        context: Dict = None,
         **kwargs,
     ) -> Dict:
         """
@@ -53,6 +54,7 @@ class ItineraryTool(BaseTool):
             budget: 预算
             travelers: 出行人数
             preferences: 用户偏好
+            context: 前置任务注入的航班、酒店、景点和攻略结果
 
         Returns:
             标准化行程生成结果
@@ -60,6 +62,8 @@ class ItineraryTool(BaseTool):
         destination = destination or "目的地"
         duration = duration or 3
         preferences = preferences or []
+        context = context or {}
+        context_summary = self._build_context_summary(context)
         budget_summary = self._build_budget_summary(duration, budget, travelers)
 
         llm_plan = None
@@ -71,6 +75,7 @@ class ItineraryTool(BaseTool):
                 budget=budget,
                 travelers=travelers,
                 preferences=preferences,
+                context=context,
             )
 
         if llm_plan:
@@ -89,6 +94,7 @@ class ItineraryTool(BaseTool):
                 summary=llm_plan.summary or self._build_summary(origin, destination, duration, budget),
                 generation_mode="llm",
                 metadata_source="llm_itinerary_generator",
+                context_summary=context_summary,
             )
 
         itinerary = self._build_itinerary(destination, duration, preferences)
@@ -104,6 +110,7 @@ class ItineraryTool(BaseTool):
             summary=self._build_summary(origin, destination, duration, budget),
             generation_mode="template",
             metadata_source="template_itinerary_generator",
+            context_summary=context_summary,
         )
 
     def _should_use_llm(self) -> bool:
@@ -118,8 +125,10 @@ class ItineraryTool(BaseTool):
         budget: float,
         travelers: int,
         preferences: List[str],
+        context: Dict = None,
     ) -> Optional[LLMItineraryPlan]:
         """调用LLM生成行程，失败时返回None"""
+        context_text = self._build_llm_context_text(context or {})
         request = LLMRequest(
             messages=[
                 LLMMessage(role="system", content=ITINERARY_GENERATION_SYSTEM_PROMPT),
@@ -133,6 +142,8 @@ class ItineraryTool(BaseTool):
                         f"预算：{budget if budget is not None else '未知'}\n"
                         f"出行人数：{travelers if travelers is not None else '未知'}\n"
                         f"用户偏好：{', '.join(preferences) if preferences else '无'}\n"
+                        f"可参考的前置工具结果：{context_text}\n"
+                        "如果前置工具结果中包含航班、酒店、景点或攻略，请优先参考这些结果生成安排。\n"
                         "只返回JSON，字段必须包含 itinerary、summary、budget_tips。\n"
                         "itinerary 的长度必须等于旅行天数，每天必须包含 day、title、activities、notes。"
                     ),
@@ -193,6 +204,7 @@ class ItineraryTool(BaseTool):
         summary: str,
         generation_mode: str,
         metadata_source: str,
+        context_summary: Dict,
     ) -> Dict:
         """构建标准化行程工具结果"""
         return {
@@ -208,6 +220,7 @@ class ItineraryTool(BaseTool):
                 "budget_summary": budget_summary,
                 "summary": summary,
                 "generation_mode": generation_mode,
+                "context_summary": context_summary,
             },
             "error": None,
             "metadata": {
@@ -215,6 +228,43 @@ class ItineraryTool(BaseTool):
                 "tool": self.name,
             },
         }
+
+    def _build_context_summary(self, context: Dict) -> Dict:
+        """构建前置工具结果摘要，用于验证依赖注入和后续调试"""
+        flights = context.get("flights") if isinstance(context, dict) else []
+        hotels = context.get("hotels") if isinstance(context, dict) else []
+        attractions = context.get("attractions") if isinstance(context, dict) else []
+        guide = context.get("guide") if isinstance(context, dict) else None
+        errors = context.get("errors") if isinstance(context, dict) else {}
+
+        return {
+            "flight_count": len(flights) if isinstance(flights, list) else 0,
+            "hotel_count": len(hotels) if isinstance(hotels, list) else 0,
+            "attraction_count": len(attractions) if isinstance(attractions, list) else 0,
+            "has_guide": bool(guide),
+            "dependency_error_count": len(errors) if isinstance(errors, dict) else 0,
+        }
+
+    def _build_llm_context_text(self, context: Dict) -> str:
+        """构建传给LLM的紧凑上下文文本"""
+        if not context:
+            return "无"
+
+        flights = context.get("flights") if isinstance(context.get("flights"), list) else []
+        hotels = context.get("hotels") if isinstance(context.get("hotels"), list) else []
+        attractions = context.get("attractions") if isinstance(context.get("attractions"), list) else []
+        errors = context.get("errors") if isinstance(context.get("errors"), dict) else {}
+
+        compact_context = {
+            "flights": flights[:3],
+            "hotels": hotels[:3],
+            "attractions": attractions[:5],
+            "guide": context.get("guide"),
+            "errors": errors,
+        }
+        if not any(compact_context.values()):
+            return "无"
+        return json.dumps(compact_context, ensure_ascii=False)
 
     def _build_itinerary(self, destination: str, duration: int, preferences: List[str]) -> List[Dict]:
         """构建每日行程"""
