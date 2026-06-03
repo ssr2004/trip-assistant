@@ -72,7 +72,9 @@ async def test_attraction_tool_returns_standard_result():
 
     assert result["success"] is True
     assert result["metadata"]["tool"] == "search_attractions"
-    assert result["metadata"]["source"] == "mock_attraction_data"
+    assert result["metadata"]["source"] == "amap_poi_mock"
+    assert result["metadata"]["provider"] == "amap"
+    assert result["metadata"]["mock"] is True
     assert len(result["data"]["attractions"]) == 4
 
 
