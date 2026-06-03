@@ -2,13 +2,28 @@
 行程生成工具
 根据目的地、天数、预算和偏好生成基础旅行行程
 """
-from typing import Dict, List
+import json
+from typing import Dict, List, Optional
 
+from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.llm.prompts import ITINERARY_GENERATION_SYSTEM_PROMPT
+from models.itinerary import LLMItineraryPlan
 from tools.registry import BaseTool
 
 
 class ItineraryTool(BaseTool):
     """行程生成工具"""
+
+    def __init__(self, llm_client: Optional[LLMClient] = None, llm_enabled: bool = False):
+        """
+        初始化行程工具
+
+        Args:
+            llm_client: LLM客户端，默认使用配置创建
+            llm_enabled: 是否启用LLM行程生成
+        """
+        self.llm_client = llm_client or LLMClient()
+        self.llm_enabled = llm_enabled
 
     @property
     def name(self) -> str:
@@ -45,10 +60,141 @@ class ItineraryTool(BaseTool):
         destination = destination or "目的地"
         duration = duration or 3
         preferences = preferences or []
-
-        itinerary = self._build_itinerary(destination, duration, preferences)
         budget_summary = self._build_budget_summary(duration, budget, travelers)
 
+        llm_plan = None
+        if self._should_use_llm():
+            llm_plan = await self._llm_generate(
+                origin=origin,
+                destination=destination,
+                duration=duration,
+                budget=budget,
+                travelers=travelers,
+                preferences=preferences,
+            )
+
+        if llm_plan:
+            return self._build_result(
+                origin=origin,
+                destination=destination,
+                duration=duration,
+                budget=budget,
+                travelers=travelers,
+                preferences=preferences,
+                itinerary=[day.model_dump() for day in llm_plan.itinerary],
+                budget_summary={
+                    **budget_summary,
+                    "budget_note": llm_plan.budget_tips or budget_summary["budget_note"],
+                },
+                summary=llm_plan.summary or self._build_summary(origin, destination, duration, budget),
+                generation_mode="llm",
+                metadata_source="llm_itinerary_generator",
+            )
+
+        itinerary = self._build_itinerary(destination, duration, preferences)
+        return self._build_result(
+            origin=origin,
+            destination=destination,
+            duration=duration,
+            budget=budget,
+            travelers=travelers,
+            preferences=preferences,
+            itinerary=itinerary,
+            budget_summary=budget_summary,
+            summary=self._build_summary(origin, destination, duration, budget),
+            generation_mode="template",
+            metadata_source="template_itinerary_generator",
+        )
+
+    def _should_use_llm(self) -> bool:
+        """判断是否使用LLM行程生成"""
+        return self.llm_enabled and self.llm_client.available
+
+    async def _llm_generate(
+        self,
+        origin: str,
+        destination: str,
+        duration: int,
+        budget: float,
+        travelers: int,
+        preferences: List[str],
+    ) -> Optional[LLMItineraryPlan]:
+        """调用LLM生成行程，失败时返回None"""
+        request = LLMRequest(
+            messages=[
+                LLMMessage(role="system", content=ITINERARY_GENERATION_SYSTEM_PROMPT),
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "请根据以下旅行需求生成结构化行程JSON。\n"
+                        f"出发地：{origin or '未知'}\n"
+                        f"目的地：{destination}\n"
+                        f"旅行天数：{duration}\n"
+                        f"预算：{budget if budget is not None else '未知'}\n"
+                        f"出行人数：{travelers if travelers is not None else '未知'}\n"
+                        f"用户偏好：{', '.join(preferences) if preferences else '无'}\n"
+                        "只返回JSON，字段必须包含 itinerary、summary、budget_tips。\n"
+                        "itinerary 的长度必须等于旅行天数，每天必须包含 day、title、activities、notes。"
+                    ),
+                ),
+            ],
+            response_format="json_object",
+            metadata={"fallback_for": "itinerary_generation"},
+        )
+        response = await self.llm_client.chat(request)
+        if not response.success:
+            return None
+
+        parsed_json = self._parse_llm_json(response.content)
+        if not parsed_json:
+            return None
+
+        try:
+            plan = LLMItineraryPlan.model_validate(parsed_json)
+        except Exception:
+            return None
+
+        if len(plan.itinerary) != duration:
+            return None
+        if any(day.day != index for index, day in enumerate(plan.itinerary, start=1)):
+            return None
+        return plan
+
+    def _parse_llm_json(self, content: str) -> Optional[Dict]:
+        """解析LLM返回的JSON，兼容Markdown代码块"""
+        if not content:
+            return None
+
+        text = content.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _build_result(
+        self,
+        origin: str,
+        destination: str,
+        duration: int,
+        budget: float,
+        travelers: int,
+        preferences: List[str],
+        itinerary: List[Dict],
+        budget_summary: Dict,
+        summary: str,
+        generation_mode: str,
+        metadata_source: str,
+    ) -> Dict:
+        """构建标准化行程工具结果"""
         return {
             "success": True,
             "data": {
@@ -60,11 +206,12 @@ class ItineraryTool(BaseTool):
                 "preferences": preferences,
                 "itinerary": itinerary,
                 "budget_summary": budget_summary,
-                "summary": self._build_summary(origin, destination, duration, budget),
+                "summary": summary,
+                "generation_mode": generation_mode,
             },
             "error": None,
             "metadata": {
-                "source": "template_itinerary_generator",
+                "source": metadata_source,
                 "tool": self.name,
             },
         }
