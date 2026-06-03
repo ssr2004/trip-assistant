@@ -96,17 +96,17 @@ class ResponseBuilder:
         lines.extend(self._format_overview(origin, destination, departure_date, duration, budget, travelers, preferences))
 
         flights_result = self._find_result_by_tool(task_results, "search_flights")
-        flights = self._result_data(flights_result) if flights_result else []
+        flights = self._tool_items(flights_result, "flights") if flights_result else []
         if flights:
             lines.extend(self._format_flights(flights, section_title="二、航班推荐"))
 
         hotels_result = self._find_result_by_tool(task_results, "search_hotels")
-        hotels = self._result_data(hotels_result) if hotels_result else []
+        hotels = self._tool_items(hotels_result, "hotels") if hotels_result else []
         if hotels:
             lines.extend(self._format_hotels(hotels, section_title="三、酒店推荐"))
 
         attractions_result = self._find_result_by_tool(task_results, "search_attractions")
-        attractions = self._result_data(attractions_result) if attractions_result else []
+        attractions = self._tool_items(attractions_result, "attractions") if attractions_result else []
         if attractions:
             lines.extend(self._format_attractions(attractions, section_title="四、景点推荐"))
 
@@ -149,18 +149,20 @@ class ResponseBuilder:
     def _format_single_tool_response(self, title: str, task_results: List[Dict], tool_name: str) -> str:
         """格式化单工具查询回复"""
         result = self._find_result_by_tool(task_results, tool_name)
-        data = self._result_data(result) if result else None
 
         if not result or not result.get("success"):
             error = result.get("error") if result else "未能获取工具结果"
             return f"{title}查询暂未成功：{error}。"
 
         if tool_name == "search_flights":
-            return "\n".join([f"为您找到以下{title}：", *self._format_flights(data, section_title=None)])
+            flights = self._tool_items(result, "flights")
+            return "\n".join([f"为您找到以下{title}：", *self._format_flights(flights, section_title=None)])
         if tool_name == "search_hotels":
-            return "\n".join([f"为您找到以下{title}：", *self._format_hotels(data, section_title=None)])
+            hotels = self._tool_items(result, "hotels")
+            return "\n".join([f"为您找到以下{title}：", *self._format_hotels(hotels, section_title=None)])
         if tool_name == "search_attractions":
-            return "\n".join([f"为您找到以下{title}：", *self._format_attractions(data, section_title=None)])
+            attractions = self._tool_items(result, "attractions")
+            return "\n".join([f"为您找到以下{title}：", *self._format_attractions(attractions, section_title=None)])
 
         return self._format_generic_response(task_results)
 
@@ -318,6 +320,16 @@ class ResponseBuilder:
         if isinstance(raw_result, dict) and "data" in raw_result:
             return raw_result.get("data") or {}
         return raw_result
+
+    def _tool_items(self, result: Optional[Dict], data_key: str) -> List[Dict]:
+        """获取列表型工具数据，兼容标准结构和旧列表结构"""
+        data = self._result_data(result)
+        if isinstance(data, dict):
+            items = data.get(data_key, [])
+            return items if isinstance(items, list) else []
+        if isinstance(data, list):
+            return data
+        return []
 
     def _slot_label(self, slot: str) -> str:
         """槽位中文名"""

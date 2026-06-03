@@ -53,5 +53,25 @@ async def test_hotel_search(agent):
     assert "杭州西湖国宾馆" in response
 
 
+@pytest.mark.asyncio
+async def test_agent_propagates_tool_failure(agent):
+    """Agent执行器可以识别工具内部失败状态"""
+    result = await agent._execute_tasks({
+        "tasks": [
+            {
+                "task_type": "tool_call",
+                "tool": "search_flights",
+                "name": "搜索航班",
+                "priority": 1,
+                "params": {"origin": "郑州"},
+            }
+        ]
+    })
+
+    task_result = result["task_results"][0]
+    assert task_result["success"] is False
+    assert "出发地和目的地" in task_result["error"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

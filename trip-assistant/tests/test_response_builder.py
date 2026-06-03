@@ -209,18 +209,25 @@ def test_build_single_flight_response_cleans_none_time():
             {
                 "task": {"task_type": "tool_call", "tool": "search_flights", "name": "搜索航班"},
                 "success": True,
-                "result": [
-                    {
-                        "flight_no": "MU1234",
-                        "airline": "东方航空",
-                        "departure_airport": "北京",
-                        "arrival_airport": "上海",
-                        "departure_time": "None 08:00",
-                        "arrival_time": "None 10:30",
-                        "price": 680,
-                        "cabin_class": "经济舱",
-                    }
-                ],
+                "result": {
+                    "success": True,
+                    "data": {
+                        "flights": [
+                            {
+                                "flight_no": "MU1234",
+                                "airline": "东方航空",
+                                "departure_airport": "北京",
+                                "arrival_airport": "上海",
+                                "departure_time": "None 08:00",
+                                "arrival_time": "None 10:30",
+                                "price": 680,
+                                "cabin_class": "经济舱",
+                            }
+                        ]
+                    },
+                    "error": None,
+                    "metadata": {"tool": "search_flights"},
+                },
                 "error": None,
             }
         ],

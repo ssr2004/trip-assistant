@@ -2,7 +2,7 @@
 酒店工具
 提供酒店搜索和预订功能
 """
-from typing import Dict, List, Optional
+from typing import Dict, List
 from tools.registry import BaseTool
 
 
@@ -17,7 +17,7 @@ class HotelTool(BaseTool):
     def description(self) -> str:
         return "搜索酒店信息"
 
-    async def execute(self, location: str = None, checkin_date: str = None, checkout_date: str = None, **kwargs) -> List[Dict]:
+    async def execute(self, location: str = None, checkin_date: str = None, checkout_date: str = None, **kwargs) -> Dict:
         """
         搜索酒店
 
@@ -27,11 +27,35 @@ class HotelTool(BaseTool):
             checkout_date: 退房日期
 
         Returns:
-            酒店列表
+            标准化酒店搜索结果
         """
-        # 这里调用真实的酒店API
-        # 暂时返回模拟数据
-        return self._get_mock_hotels(location, checkin_date, checkout_date)
+        if not location:
+            return {
+                "success": False,
+                "data": {"hotels": []},
+                "error": "查询酒店需要提供目的地或入住城市",
+                "metadata": {
+                    "source": "mock_hotel_data",
+                    "tool": self.name,
+                },
+            }
+
+        hotels = self._get_mock_hotels(location, checkin_date, checkout_date)
+        return {
+            "success": True,
+            "data": {
+                "location": location,
+                "checkin_date": checkin_date,
+                "checkout_date": checkout_date,
+                "hotels": hotels,
+            },
+            "error": None,
+            "metadata": {
+                "source": "mock_hotel_data",
+                "tool": self.name,
+                "count": len(hotels),
+            },
+        }
 
     def _get_mock_hotels(self, location: str, checkin_date: str, checkout_date: str) -> List[Dict]:
         """获取模拟酒店数据"""
@@ -39,7 +63,7 @@ class HotelTool(BaseTool):
             {
                 "id": 1,
                 "name": "杭州西湖国宾馆",
-                "location": location or "杭州",
+                "location": location,
                 "address": "杭州市西湖区杨公堤18号",
                 "price_per_night": 1200,
                 "rating": 4.8,
@@ -49,7 +73,7 @@ class HotelTool(BaseTool):
             {
                 "id": 2,
                 "name": "杭州西溪湿地公园酒店",
-                "location": location or "杭州",
+                "location": location,
                 "address": "杭州市西湖区天目山路518号",
                 "price_per_night": 800,
                 "rating": 4.5,
@@ -59,7 +83,7 @@ class HotelTool(BaseTool):
             {
                 "id": 3,
                 "name": "杭州滨江银泰喜来登大酒店",
-                "location": location or "杭州",
+                "location": location,
                 "address": "杭州市滨江区江南大道288号",
                 "price_per_night": 600,
                 "rating": 4.3,

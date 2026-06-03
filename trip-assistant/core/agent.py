@@ -114,11 +114,13 @@ class TravelAgent:
 
             try:
                 result = await self.tool_registry.execute(tool_name, params)
+                tool_success = result.get("success", True) if isinstance(result, dict) else True
+                tool_error = result.get("error") if isinstance(result, dict) else None
                 results.append({
                     "task": task,
-                    "success": True,
+                    "success": tool_success,
                     "result": result,
-                    "error": None,
+                    "error": tool_error,
                 })
             except Exception as exc:
                 results.append(self._build_error_result(task, str(exc)))
