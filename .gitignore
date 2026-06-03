@@ -21,6 +21,7 @@ env/
 !.env.example
 
 # Runtime data and local databases
+data/
 trip-assistant/data/
 trip-assistant/*.db
 trip-assistant/*.sqlite
