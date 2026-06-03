@@ -1,0 +1,28 @@
+# Git and local metadata
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Runtime data and local planning docs
+data/
+*.db
+*.sqlite
+local-docs/
+
+# Development-only files
+tests/
+frontend/

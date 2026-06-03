@@ -1,2 +1,31 @@
+# Legacy local databases
 travel_new.sqlite
 travel2.sqlite
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Runtime data and local databases
+trip-assistant/data/
+trip-assistant/*.db
+trip-assistant/*.sqlite
+*.sqlite
+*.sqlite3
+
+# Local planning documents
+trip-assistant/local-docs/
