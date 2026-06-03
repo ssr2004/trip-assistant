@@ -185,7 +185,7 @@ class IntentParser:
 
     def _extract_duration(self, text: str) -> Optional[int]:
         """提取旅行天数"""
-        digit_duration = re.search(r"(\d+)\s*(?:天|日)(?:游|旅行|旅游|行程|玩)?", text)
+        digit_duration = re.search(r"(?<![月\d])(\d+)\s*(?:天|日)(?:游|旅行|旅游|行程|玩)?", text)
         if digit_duration:
             return int(digit_duration.group(1))
 

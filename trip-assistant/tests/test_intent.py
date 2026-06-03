@@ -95,3 +95,13 @@ def test_parse_preferences_and_travelers():
     assert result["entities"]["travelers"] == 2
     assert "干净" in result["entities"]["preferences"]
     assert "地铁附近" in result["entities"]["preferences"]
+
+
+def test_parse_date_without_misreading_duration():
+    """日期中的日不应被误识别为旅行天数"""
+    parser = IntentParser()
+
+    result = parser.parse("我要从郑州去杭州玩三天，预算3000，6月10日出发")
+
+    assert result["entities"]["departure_date"].endswith("-06-10")
+    assert result["entities"]["duration"] == 3

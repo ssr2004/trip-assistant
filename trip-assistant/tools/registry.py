@@ -40,10 +40,16 @@ class ToolRegistry:
         from tools.flights import FlightTool
         from tools.hotels import HotelTool
         from tools.attractions import AttractionTool
+        from tools.policy import PolicyTool
+        from tools.guide import GuideTool
+        from tools.itinerary import ItineraryTool
 
         self.register(FlightTool())
         self.register(HotelTool())
         self.register(AttractionTool())
+        self.register(PolicyTool())
+        self.register(GuideTool())
+        self.register(ItineraryTool())
 
     def register(self, tool: BaseTool):
         """
