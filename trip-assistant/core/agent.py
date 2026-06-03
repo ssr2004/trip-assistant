@@ -126,6 +126,7 @@ class TravelAgent:
 
             try:
                 result = await self.tool_registry.execute(tool_name, params)
+                result = self._normalize_tool_result(result)
                 tool_success = result.get("success", True) if isinstance(result, dict) else True
                 tool_error = result.get("error") if isinstance(result, dict) else None
                 task_result = {
@@ -182,6 +183,14 @@ class TravelAgent:
         task_id = task.get("task_id")
         if task_id:
             result_by_task_id[task_id] = task_result
+
+    def _normalize_tool_result(self, result: Any) -> Any:
+        """规范化工具结果，兼容ToolResult/Pydantic模型和普通dict"""
+        if hasattr(result, "to_dict"):
+            return result.to_dict()
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+        return result
 
     def _inject_dependency_context(
         self,

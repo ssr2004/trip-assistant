@@ -5,6 +5,8 @@
 from typing import Dict, List, Optional, Any
 from abc import ABC, abstractmethod
 
+from models.tool import ToolResult
+
 
 class BaseTool(ABC):
     """工具基类"""
@@ -25,6 +27,39 @@ class BaseTool(ABC):
     async def execute(self, **kwargs) -> Any:
         """执行工具"""
         pass
+
+    def success_result(
+        self,
+        data: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """构建标准成功工具结果"""
+        return ToolResult(
+            success=True,
+            data=data,
+            error=None,
+            metadata=self._build_metadata(metadata),
+        ).to_dict()
+
+    def error_result(
+        self,
+        error: str,
+        data: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """构建标准失败工具结果"""
+        return ToolResult(
+            success=False,
+            data=data or {},
+            error=error,
+            metadata=self._build_metadata(metadata),
+        ).to_dict()
+
+    def _build_metadata(self, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """补充工具元数据"""
+        merged_metadata = dict(metadata or {})
+        merged_metadata.setdefault("tool", self.name)
+        return merged_metadata
 
 
 class ToolRegistry:
@@ -87,7 +122,16 @@ class ToolRegistry:
         if not tool:
             raise ValueError(f"工具不存在: {tool_name}")
 
-        return await tool.execute(**params)
+        result = await tool.execute(**params)
+        return self._normalize_result(result)
+
+    def _normalize_result(self, result: Any) -> Any:
+        """规范化工具返回结果，兼容ToolResult和普通dict"""
+        if isinstance(result, ToolResult):
+            return result.to_dict()
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+        return result
 
     def list_tools(self) -> List[Dict]:
         """列出所有工具"""

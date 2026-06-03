@@ -33,19 +33,14 @@ class PolicyTool(BaseTool):
         results = self._search_documents(query, documents)
         answer = self._build_answer(query, results)
 
-        return {
-            "success": True,
-            "data": {
+        return self.success_result(
+            data={
                 "query": query,
                 "answer": answer,
                 "sources": results,
             },
-            "error": None,
-            "metadata": {
-                "source": "local_policy_documents",
-                "tool": self.name,
-            },
-        }
+            metadata={"source": "local_policy_documents"},
+        )
 
     def _load_documents(self) -> List[Dict]:
         """加载本地政策文档"""

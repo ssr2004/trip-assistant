@@ -207,9 +207,8 @@ class ItineraryTool(BaseTool):
         context_summary: Dict,
     ) -> Dict:
         """构建标准化行程工具结果"""
-        return {
-            "success": True,
-            "data": {
+        return self.success_result(
+            data={
                 "origin": origin,
                 "destination": destination,
                 "duration": duration,
@@ -222,12 +221,8 @@ class ItineraryTool(BaseTool):
                 "generation_mode": generation_mode,
                 "context_summary": context_summary,
             },
-            "error": None,
-            "metadata": {
-                "source": metadata_source,
-                "tool": self.name,
-            },
-        }
+            metadata={"source": metadata_source},
+        )
 
     def _build_context_summary(self, context: Dict) -> Dict:
         """构建前置工具结果摘要，用于验证依赖注入和后续调试"""

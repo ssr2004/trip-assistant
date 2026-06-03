@@ -34,20 +34,15 @@ class GuideTool(BaseTool):
         results = self._search_documents(query, destination, documents)
         answer = self._build_answer(query, destination, results)
 
-        return {
-            "success": True,
-            "data": {
+        return self.success_result(
+            data={
                 "query": query,
                 "destination": destination,
                 "answer": answer,
                 "sources": results,
             },
-            "error": None,
-            "metadata": {
-                "source": "local_guide_documents",
-                "tool": self.name,
-            },
-        }
+            metadata={"source": "local_guide_documents"},
+        )
 
     def _load_documents(self) -> List[Dict]:
         """加载本地攻略文档"""

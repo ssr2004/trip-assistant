@@ -30,32 +30,25 @@ class FlightTool(BaseTool):
             标准化航班搜索结果
         """
         if not origin or not destination:
-            return {
-                "success": False,
-                "data": {"flights": []},
-                "error": "查询航班需要提供出发地和目的地",
-                "metadata": {
-                    "source": "mock_flight_data",
-                    "tool": self.name,
-                },
-            }
+            return self.error_result(
+                error="查询航班需要提供出发地和目的地",
+                data={"flights": []},
+                metadata={"source": "mock_flight_data"},
+            )
 
         flights = self._get_mock_flights(origin, destination, date)
-        return {
-            "success": True,
-            "data": {
+        return self.success_result(
+            data={
                 "origin": origin,
                 "destination": destination,
                 "date": date,
                 "flights": flights,
             },
-            "error": None,
-            "metadata": {
+            metadata={
                 "source": "mock_flight_data",
-                "tool": self.name,
                 "count": len(flights),
             },
-        }
+        )
 
     def _get_mock_flights(self, origin: str, destination: str, date: str) -> List[Dict]:
         """获取模拟航班数据"""

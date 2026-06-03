@@ -30,32 +30,25 @@ class HotelTool(BaseTool):
             标准化酒店搜索结果
         """
         if not location:
-            return {
-                "success": False,
-                "data": {"hotels": []},
-                "error": "查询酒店需要提供目的地或入住城市",
-                "metadata": {
-                    "source": "mock_hotel_data",
-                    "tool": self.name,
-                },
-            }
+            return self.error_result(
+                error="查询酒店需要提供目的地或入住城市",
+                data={"hotels": []},
+                metadata={"source": "mock_hotel_data"},
+            )
 
         hotels = self._get_mock_hotels(location, checkin_date, checkout_date)
-        return {
-            "success": True,
-            "data": {
+        return self.success_result(
+            data={
                 "location": location,
                 "checkin_date": checkin_date,
                 "checkout_date": checkout_date,
                 "hotels": hotels,
             },
-            "error": None,
-            "metadata": {
+            metadata={
                 "source": "mock_hotel_data",
-                "tool": self.name,
                 "count": len(hotels),
             },
-        }
+        )
 
     def _get_mock_hotels(self, location: str, checkin_date: str, checkout_date: str) -> List[Dict]:
         """获取模拟酒店数据"""

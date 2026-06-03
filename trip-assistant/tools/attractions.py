@@ -29,31 +29,24 @@ class AttractionTool(BaseTool):
             标准化景点搜索结果
         """
         if not location:
-            return {
-                "success": False,
-                "data": {"attractions": []},
-                "error": "查询景点需要提供目的地或城市",
-                "metadata": {
-                    "source": "mock_attraction_data",
-                    "tool": self.name,
-                },
-            }
+            return self.error_result(
+                error="查询景点需要提供目的地或城市",
+                data={"attractions": []},
+                metadata={"source": "mock_attraction_data"},
+            )
 
         attractions = self._get_mock_attractions(location, keywords)
-        return {
-            "success": True,
-            "data": {
+        return self.success_result(
+            data={
                 "location": location,
                 "keywords": keywords or [],
                 "attractions": attractions,
             },
-            "error": None,
-            "metadata": {
+            metadata={
                 "source": "mock_attraction_data",
-                "tool": self.name,
                 "count": len(attractions),
             },
-        }
+        )
 
     def _get_mock_attractions(self, location: str, keywords: List[str]) -> List[Dict]:
         """获取模拟景点数据"""
