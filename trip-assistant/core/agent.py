@@ -12,6 +12,7 @@ from core.state import AgentState
 from core.planner import TaskPlanner
 from core.memory.manager import MemoryManager
 from core.intent import IntentParser
+from core.response_builder import ResponseBuilder
 from rag.retriever import RAGRetriever
 from tools.registry import ToolRegistry
 
@@ -26,6 +27,7 @@ class TravelAgent:
         self.memory_manager = MemoryManager()
         self.rag_retriever = RAGRetriever()
         self.tool_registry = ToolRegistry()
+        self.response_builder = ResponseBuilder()
 
         # 构建工作流图
         self.graph = self._build_graph()
@@ -128,7 +130,7 @@ class TravelAgent:
         task_results = state.get("task_results", [])
         intent = state.get("intent")
 
-        response = self._build_response(intent, task_results)
+        response = self.response_builder.build(intent, task_results)
 
         # 保存到记忆
         self.memory_manager.save(

@@ -14,10 +14,24 @@ def agent():
 
 @pytest.mark.asyncio
 async def test_travel_plan(agent):
-    """测试旅行规划"""
+    """测试旅行规划追问"""
     response = await agent.arun("我要从郑州去杭州", "test-session-1")
     assert response is not None
-    assert len(response) > 0
+    assert "请问" in response
+    assert "task_type" not in response
+
+
+@pytest.mark.asyncio
+async def test_complete_travel_plan_response(agent):
+    """测试完整旅行规划回复"""
+    response = await agent.arun("我要从郑州去杭州玩三天，预算3000，6月10日出发", "test-session-4")
+    assert response is not None
+    assert "已为您规划郑州到杭州的3天旅行方案" in response
+    assert "航班推荐" in response
+    assert "酒店推荐" in response
+    assert "景点推荐" in response
+    assert "每日行程" in response
+    assert "{'" not in response
 
 
 @pytest.mark.asyncio
@@ -25,6 +39,9 @@ async def test_flight_search(agent):
     """测试航班搜索"""
     response = await agent.arun("搜索从北京到上海的航班", "test-session-2")
     assert response is not None
+    assert "航班推荐" in response
+    assert "东方航空" in response
+    assert "None" not in response
 
 
 @pytest.mark.asyncio
@@ -32,6 +49,8 @@ async def test_hotel_search(agent):
     """测试酒店搜索"""
     response = await agent.arun("搜索杭州的酒店", "test-session-3")
     assert response is not None
+    assert "酒店推荐" in response
+    assert "杭州西湖国宾馆" in response
 
 
 if __name__ == "__main__":
