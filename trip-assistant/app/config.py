@@ -2,17 +2,22 @@
 应用配置管理
 使用环境变量管理敏感信息
 """
-import os
-from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """应用配置"""
 
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # 应用基础配置
-    APP_NAME: str = "旅行AI助手"
+    APP_NAME: str = "TravelMind"
     APP_VERSION: str = "1.0.0"
+    APP_ENV: str = "development"
     DEBUG: bool = True
 
     # LLM配置
@@ -33,7 +38,7 @@ class Settings(BaseSettings):
     RAG_SCORE_THRESHOLD: float = 0.5
 
     # 数据库配置
-    DATABASE_URL: str = "sqlite:///./travel.db"
+    DATABASE_URL: str = "sqlite:///./data/travelmind.db"
 
     # API配置
     AMADEUS_API_KEY: str = ""
@@ -48,9 +53,6 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 # 全局配置实例
