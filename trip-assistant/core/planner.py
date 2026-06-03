@@ -2,21 +2,41 @@
 智能任务规划器
 根据结构化意图、实体和缺失槽位生成可执行任务计划
 """
-from typing import Dict, List
+from typing import Dict, List, Optional
+import json
 
+from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.llm.prompts import PLANNER_FALLBACK_SYSTEM_PROMPT
 from models.task import PlanningTask, TaskPlan
 
 
 class TaskPlanner:
     """任务规划器"""
 
-    def __init__(self):
-        """初始化规划器"""
-        self.llm_planner_enabled = False
+    ALLOWED_TASK_TYPES = {"ask_user", "tool_call", "recommend_destination", "generate_itinerary"}
+    ALLOWED_TOOLS = {
+        "search_flights",
+        "search_hotels",
+        "search_attractions",
+        "retrieve_policy",
+        "retrieve_guide",
+        "generate_itinerary",
+    }
+
+    def __init__(self, llm_client: Optional[LLMClient] = None, llm_planner_enabled: bool = False):
+        """
+        初始化规划器
+
+        Args:
+            llm_client: LLM客户端，默认使用配置创建
+            llm_planner_enabled: 是否启用LLM规划fallback
+        """
+        self.llm_client = llm_client or LLMClient()
+        self.llm_planner_enabled = llm_planner_enabled
 
     def plan(self, intent: Dict, context: Dict) -> List[Dict]:
         """
-        根据意图规划任务
+        根据意图规划任务（同步模板规划）
 
         Args:
             intent: 意图信息
@@ -28,11 +48,31 @@ class TaskPlanner:
         if not intent:
             return []
 
-        if self.llm_planner_enabled:
-            return self._llm_plan(intent, context)
-
         plan = self._template_plan(intent, context)
         return [task.model_dump() for task in plan.tasks]
+
+    async def plan_async(self, intent: Dict, context: Dict) -> List[Dict]:
+        """
+        根据意图异步规划任务，模板优先，复杂场景可尝试LLM fallback
+
+        Args:
+            intent: 意图信息
+            context: 上下文信息
+
+        Returns:
+            任务列表
+        """
+        if not intent:
+            return []
+
+        template_plan = self._template_plan(intent, context)
+        if not self._should_use_llm_plan(intent, context, template_plan):
+            return [task.model_dump() for task in template_plan.tasks]
+
+        llm_plan = await self._llm_plan(intent, context, template_plan)
+        if llm_plan:
+            return [task.model_dump() for task in llm_plan.tasks]
+        return [task.model_dump() for task in template_plan.tasks]
 
     def _template_plan(self, intent: Dict, context: Dict) -> TaskPlan:
         """基于模板和规则生成任务计划"""
@@ -293,11 +333,103 @@ class TaskPlanner:
         }
         return questions.get(first_slot, "请补充一下旅行需求中的关键信息。")
 
-    def _llm_plan(self, intent: Dict, context: Dict) -> List[Dict]:
-        """
-        LLM规划器预留接口
+    def _should_use_llm_plan(self, intent: Dict, context: Dict, template_plan: TaskPlan) -> bool:
+        """判断是否尝试LLM规划"""
+        if not self.llm_planner_enabled or not self.llm_client.available:
+            return False
 
-        当前阶段先使用模板规划跑通稳定闭环。后续接入LLM后，可以在这里根据复杂自然语言、
-        用户偏好和历史记忆生成更灵活的任务计划。
-        """
-        return [task.model_dump() for task in self._template_plan(intent, context).tasks]
+        if template_plan.need_user_input:
+            return False
+
+        query = context.get("query", "") or ""
+        entities = intent.get("entities", {}) or {}
+        preferences = entities.get("preferences", []) or []
+        confidence = intent.get("confidence", 1.0)
+        complex_keywords = ["顺便", "同时", "不要太累", "别太累", "如果可以", "帮我权衡", "兼顾", "路线", "天气"]
+
+        return (
+            len(query) >= 40
+            or any(keyword in query for keyword in complex_keywords)
+            or len(preferences) >= 3
+            or confidence < 0.65
+        )
+
+    async def _llm_plan(self, intent: Dict, context: Dict, template_plan: TaskPlan) -> Optional[TaskPlan]:
+        """调用LLM生成任务计划，失败时返回None"""
+        request = LLMRequest(
+            messages=[
+                LLMMessage(role="system", content=PLANNER_FALLBACK_SYSTEM_PROMPT),
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "请基于下面的意图和上下文生成任务计划JSON。\n"
+                        f"用户输入：{context.get('query', '')}\n"
+                        f"结构化意图：{json.dumps(intent, ensure_ascii=False)}\n"
+                        f"模板规划参考：{template_plan.model_dump_json() }"
+                    ),
+                ),
+            ],
+            response_format="json_object",
+            metadata={"fallback_for": "task_plan"},
+        )
+        response = await self.llm_client.chat(request)
+        if not response.success:
+            return None
+
+        parsed_json = self._parse_llm_json(response.content)
+        if not parsed_json:
+            return None
+
+        try:
+            plan = TaskPlan.model_validate(parsed_json)
+        except Exception:
+            return None
+
+        return plan if self._validate_llm_plan(plan) else None
+
+    def _parse_llm_json(self, content: str) -> Optional[Dict]:
+        """解析LLM返回的JSON，兼容Markdown代码块"""
+        if not content:
+            return None
+
+        text = content.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _validate_llm_plan(self, plan: TaskPlan) -> bool:
+        """校验LLM规划结果是否安全可执行"""
+        task_ids = set()
+        for task in plan.tasks:
+            if not task.task_id or task.task_id in task_ids:
+                return False
+            task_ids.add(task.task_id)
+
+            if task.task_type not in self.ALLOWED_TASK_TYPES:
+                return False
+
+            if task.priority is None:
+                return False
+
+            if task.task_type in {"tool_call", "generate_itinerary"}:
+                if task.tool not in self.ALLOWED_TOOLS:
+                    return False
+
+            if task.task_type in {"ask_user", "recommend_destination"} and task.tool:
+                return False
+
+            for dependency in task.depends_on:
+                if dependency not in task_ids:
+                    return False
+
+        return True

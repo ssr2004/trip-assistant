@@ -86,7 +86,7 @@ class TravelAgent:
             "memory": state.get("memory_context", {}),
         }
 
-        tasks = self.task_planner.plan(intent, context)
+        tasks = await self.task_planner.plan_async(intent, context)
         return {"tasks": tasks}
 
     async def _execute_tasks(self, state: AgentState) -> Dict:
