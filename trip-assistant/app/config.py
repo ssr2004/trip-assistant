@@ -40,10 +40,16 @@ class Settings(BaseSettings):
     # 数据库配置
     DATABASE_URL: str = "sqlite:///./data/travelmind.db"
 
+    # 外部API通用配置
+    EXTERNAL_API_TIMEOUT: int = 10
+    EXTERNAL_API_RETRY_TIMES: int = 2
+    EXTERNAL_API_MOCK_ENABLED: bool = True
+
     # API配置
     AMADEUS_API_KEY: str = ""
     AMADEUS_API_SECRET: str = ""
     AMAP_API_KEY: str = ""  # 高德地图API
+    WEATHER_API_KEY: str = ""
 
     # 记忆系统配置
     MEMORY_MAX_TURNS: int = 20  # 短期记忆最大轮数
