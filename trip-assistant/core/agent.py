@@ -149,8 +149,9 @@ class TravelAgent:
         """生成最终回复"""
         task_results = state.get("task_results", [])
         intent = state.get("intent")
+        memory_context = state.get("memory_context", {})
 
-        response = self.response_builder.build(intent, task_results)
+        response = self.response_builder.build(intent, task_results, memory_context)
 
         # 保存到记忆
         self.memory_manager.save(

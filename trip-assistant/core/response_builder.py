@@ -8,17 +8,19 @@ from typing import Any, Dict, List, Optional
 class ResponseBuilder:
     """旅行助手响应构建器"""
 
-    def build(self, intent: Dict, task_results: List[Dict]) -> str:
+    def build(self, intent: Dict, task_results: List[Dict], memory_context: Dict = None) -> str:
         """
         构建最终回复
 
         Args:
             intent: 结构化意图
             task_results: 任务执行结果
+            memory_context: 记忆上下文，可包含长期用户偏好
 
         Returns:
             面向用户的中文回复
         """
+        memory_context = memory_context or {}
         if not task_results:
             return "我已经理解您的需求，但当前还缺少可执行的旅行任务。您可以补充出发地、目的地、日期或预算等信息。"
 
@@ -32,7 +34,7 @@ class ResponseBuilder:
 
         intent_type = (intent or {}).get("intent")
         if intent_type == "travel_plan":
-            return self._format_travel_plan(intent or {}, task_results)
+            return self._format_travel_plan(intent or {}, task_results, memory_context)
         if intent_type == "policy_query":
             return self._format_policy_response(task_results)
         if intent_type == "flight_search":
@@ -78,8 +80,9 @@ class ResponseBuilder:
         lines.append("\n您可以选择其中一个城市，我再继续为您规划交通、酒店和每日行程。")
         return "\n".join(lines)
 
-    def _format_travel_plan(self, intent: Dict, task_results: List[Dict]) -> str:
+    def _format_travel_plan(self, intent: Dict, task_results: List[Dict], memory_context: Dict = None) -> str:
         """格式化完整旅行规划回复"""
+        memory_context = memory_context or {}
         entities = intent.get("entities", {}) or {}
         itinerary_result = self._find_result_by_tool(task_results, "generate_itinerary")
         itinerary_data = self._result_data(itinerary_result) if itinerary_result else {}
@@ -93,7 +96,17 @@ class ResponseBuilder:
         departure_date = entities.get("departure_date")
 
         lines = [f"已为您规划{origin}到{destination}的{duration}天旅行方案。"]
-        lines.extend(self._format_overview(origin, destination, departure_date, duration, budget, travelers, preferences))
+        memory_note = self._format_memory_preference_note(memory_context)
+        lines.extend(self._format_overview(
+            origin,
+            destination,
+            departure_date,
+            duration,
+            budget,
+            travelers,
+            preferences,
+            memory_note,
+        ))
 
         flights_result = self._find_result_by_tool(task_results, "search_flights")
         flights = self._tool_items(flights_result, "flights") if flights_result else []
@@ -178,6 +191,58 @@ class ResponseBuilder:
                 lines.append(f"- {task_name}：执行失败，原因是{result.get('error')}。")
         return "\n".join(lines)
 
+    def _format_memory_preference_note(self, memory_context: Dict) -> Optional[str]:
+        """格式化长期记忆偏好说明，仅用于完整旅行规划"""
+        preferences = (memory_context or {}).get("preferences") or (memory_context or {}).get("user_preferences") or {}
+        if not isinstance(preferences, dict):
+            return None
+
+        display_preferences = []
+        for field in [
+            "travel_styles",
+            "hotel_preferences",
+            "transport_preferences",
+            "attraction_preferences",
+            "food_preferences",
+            "raw_preferences",
+        ]:
+            values = preferences.get(field, [])
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                label = self._memory_preference_label(value)
+                if label and label not in display_preferences:
+                    display_preferences.append(label)
+
+        budget_preference = preferences.get("budget_preference")
+        if budget_preference:
+            label = self._memory_preference_label(budget_preference)
+            if label and label not in display_preferences:
+                display_preferences.append(label)
+
+        if not display_preferences:
+            return None
+        return f"已结合您偏好的{'、'.join(display_preferences[:4])}进行安排。"
+
+    def _memory_preference_label(self, value: Any) -> Optional[str]:
+        """将记忆偏好标签转为更自然的展示文本"""
+        if not value:
+            return None
+        labels = {
+            "地铁附近": "地铁附近住宿",
+            "交通方便": "交通便利住宿",
+            "经济型酒店": "经济型住宿",
+            "高星级酒店": "高星级住宿",
+            "经济型": "经济预算",
+            "中档": "中档预算",
+            "舒适型": "舒适体验",
+            "豪华型": "高端体验",
+            "自然风光": "自然风光体验",
+            "人文历史": "人文历史体验",
+            "当地美食": "当地美食体验",
+        }
+        return labels.get(str(value), str(value))
+
     def _format_overview(
         self,
         origin: str,
@@ -187,6 +252,7 @@ class ResponseBuilder:
         budget: Optional[float],
         travelers: Optional[int],
         preferences: List[str],
+        memory_note: Optional[str] = None,
     ) -> List[str]:
         """格式化出行概览"""
         lines = ["", "一、出行概览"]
@@ -200,6 +266,8 @@ class ResponseBuilder:
             lines.append(f"- 预算：约{budget:g}元")
         if preferences:
             lines.append(f"- 偏好：{'、'.join(preferences)}")
+        if memory_note:
+            lines.append(f"- 个性化参考：{memory_note}")
         return lines
 
     def _format_flights(self, flights: List[Dict], section_title: Optional[str]) -> List[str]:
