@@ -1,52 +1,47 @@
 """
 意图识别模块
-解析用户输入的自然语言，提取意图和实体
+解析用户输入的自然语言，提取意图、实体和缺失槽位
 """
-from typing import Dict, Optional
-from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
+from datetime import date, timedelta
+import re
+from typing import Dict, List, Optional
 
-from app.config import settings
-from models.intent import Intent, TravelIntent
+from models.intent import TravelIntent
 
 
 class IntentParser:
     """意图解析器"""
 
-    def __init__(self):
-        """初始化意图解析器"""
-        self.parser = JsonOutputParser(pydantic_object=TravelIntent)
-        self.prompt = self._create_prompt()
+    CITIES = [
+        "北京", "上海", "广州", "深圳", "成都", "杭州", "西安", "重庆",
+        "郑州", "武汉", "长沙", "南京", "苏州", "厦门", "青岛", "大连",
+        "三亚", "昆明", "大理", "丽江", "桂林", "贵阳", "哈尔滨",
+        "天津", "沈阳", "济南", "福州", "南昌", "合肥", "宁波", "无锡",
+    ]
 
-    def _create_prompt(self) -> ChatPromptTemplate:
-        """创建提示模板"""
-        return ChatPromptTemplate.from_messages([
-            ("system", """你是一个旅行助手的意图识别模块。
-请分析用户输入，提取以下信息：
+    CHINESE_NUMBERS = {
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }
 
-1. intent: 意图类型
-   - travel_plan: 旅行规划（需要航班+酒店+行程）
-   - flight_search: 航班搜索
-   - hotel_search: 酒店搜索
-   - attraction_search: 景点搜索
-   - policy_query: 政策查询
-   - general_chat: 闲聊
-
-2. entities: 实体信息
-   - origin: 出发地
-   - destination: 目的地
-   - departure_date: 出发日期
-   - return_date: 返回日期
-   - duration: 旅行天数
-   - budget: 预算
-   - preferences: 偏好（如经济舱、靠窗等）
-
-3. confidence: 置信度（0-1）
-
-{format_instructions}"""),
-            ("user", "{input}")
-        ])
+    REQUIRED_SLOTS = {
+        "travel_plan": ["origin", "destination", "departure_date", "duration"],
+        "flight_search": ["origin", "destination"],
+        "hotel_search": ["destination"],
+        "attraction_search": ["destination"],
+        "policy_query": [],
+        "general_chat": [],
+    }
 
     def parse(self, user_input: str) -> Dict:
         """
@@ -58,103 +53,230 @@ class IntentParser:
         Returns:
             解析后的意图字典
         """
-        # 简单的规则匹配（后续可替换为LLM）
-        intent = self._rule_based_parse(user_input)
+        normalized_text = self._normalize_text(user_input)
+        intent = self._detect_intent(normalized_text)
+        entities = self._extract_entities(normalized_text, intent)
+        missing_slots = self._detect_missing_slots(intent, entities)
+        followup_question = self._build_followup_question(missing_slots, entities)
 
-        # 如果规则匹配失败，使用LLM
-        if intent["confidence"] < 0.5:
-            intent = self._llm_parse(user_input)
+        parsed = TravelIntent(
+            intent=intent,
+            entities=entities,
+            confidence=self._calculate_confidence(intent, entities, missing_slots),
+            missing_slots=missing_slots,
+            followup_question=followup_question,
+        )
+        return parsed.model_dump()
 
-        return intent
+    def _normalize_text(self, text: str) -> str:
+        """标准化输入文本"""
+        return text.strip().replace("，", ",").replace("。", ".")
 
-    def _rule_based_parse(self, text: str) -> Dict:
-        """基于规则的意图识别"""
-        text = text.lower()
+    def _detect_intent(self, text: str) -> str:
+        """基于规则识别旅行意图"""
+        if any(keyword in text for keyword in ["退票", "改签", "取消政策", "退改", "政策", "规定", "能退吗"]):
+            return "policy_query"
 
-        # 关键词映射
-        keywords = {
-            "travel_plan": ["去", "旅游", "旅行", "玩", "行程", "计划"],
-            "flight_search": ["航班", "飞机", "机票", "飞"],
-            "hotel_search": ["酒店", "住宿", "宾馆", "住"],
-            "attraction_search": ["景点", "玩", "观光", "游览"],
-            "policy_query": ["退票", "改签", "政策", "规定", "能退吗"]
-        }
+        if any(keyword in text for keyword in ["酒店", "住宿", "宾馆", "民宿", "住哪里", "住哪"]):
+            return "hotel_search"
 
-        # 检测意图
-        detected_intent = "general_chat"
-        max_score = 0
+        if any(keyword in text for keyword in ["航班", "飞机", "机票"]):
+            return "flight_search"
 
-        for intent_type, kws in keywords.items():
-            score = sum(1 for kw in kws if kw in text)
-            if score > max_score:
-                max_score = score
-                detected_intent = intent_type
+        if re.search(r".+飞.+", text) and not any(keyword in text for keyword in ["玩", "旅游", "旅行", "行程"]):
+            return "flight_search"
 
-        # 提取实体
-        entities = self._extract_entities(text)
+        if any(keyword in text for keyword in ["景点", "好玩", "玩什么", "有什么玩", "观光", "游览"]):
+            return "attraction_search"
 
-        return {
-            "intent": detected_intent,
-            "entities": entities,
-            "confidence": min(0.3 + max_score * 0.2, 0.9)
-        }
+        if any(keyword in text for keyword in ["旅行", "旅游", "行程", "计划", "安排", "规划"]):
+            return "travel_plan"
 
-    def _extract_entities(self, text: str) -> Dict:
-        """提取实体"""
-        import re
+        if self._has_route_expression(text) and any(keyword in text for keyword in ["去", "到", "玩", "游"]):
+            return "travel_plan"
+
+        return "general_chat"
+
+    def _extract_entities(self, text: str, intent: str) -> Dict:
+        """提取旅行实体"""
+        origin, destination = self._extract_route(text, intent)
 
         entities = {
-            "origin": None,
-            "destination": None,
-            "departure_date": None,
+            "origin": origin,
+            "destination": destination,
+            "departure_date": self._extract_departure_date(text),
             "return_date": None,
-            "duration": None,
-            "budget": None,
-            "preferences": []
+            "duration": self._extract_duration(text),
+            "budget": self._extract_budget(text),
+            "travelers": self._extract_travelers(text),
+            "preferences": self._extract_preferences(text),
         }
-
-        # 城市名称匹配（简化版）
-        cities = ["北京", "上海", "广州", "深圳", "成都", "杭州", "西安", "重庆",
-                  "郑州", "武汉", "长沙", "南京", "苏州", "厦门", "青岛", "大连",
-                  "三亚", "昆明", "大理", "丽江", "桂林", "贵阳", "哈尔滨"]
-
-        found_cities = [city for city in cities if city in text]
-        if len(found_cities) >= 2:
-            entities["origin"] = found_cities[0]
-            entities["destination"] = found_cities[1]
-        elif len(found_cities) == 1:
-            entities["destination"] = found_cities[0]
-
-        # 日期匹配
-        date_pattern = r'(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?)'
-        dates = re.findall(date_pattern, text)
-        if dates:
-            entities["departure_date"] = dates[0]
-        if len(dates) > 1:
-            entities["return_date"] = dates[1]
-
-        # 天数匹配
-        duration_pattern = r'(\d+)\s*[天日]'
-        duration_match = re.search(duration_pattern, text)
-        if duration_match:
-            entities["duration"] = int(duration_match.group(1))
-
         return entities
 
-    def _llm_parse(self, user_input: str) -> Dict:
-        """使用LLM进行意图识别"""
-        # 这里需要调用LLM
-        # 暂时返回默认值
-        return {
-            "intent": "general_chat",
-            "entities": {
-                "origin": None,
-                "destination": None,
-                "departure_date": None,
-                "return_date": None,
-                "duration": None,
-                "budget": None,
-                "preferences": []
-            },
-            "confidence": 0.3
+    def _extract_route(self, text: str, intent: str) -> tuple[Optional[str], Optional[str]]:
+        """提取出发地和目的地"""
+        route_patterns = [
+            r"从(?P<origin>[^,，。\s]{2,6})(?:出发)?(?:去|到|飞往|前往)(?P<destination>[^,，。\s]{2,6})",
+            r"(?P<origin>[^,，。\s]{2,6})(?:到|飞|去)(?P<destination>[^,，。\s]{2,6})",
+        ]
+
+        for pattern in route_patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            origin = self._match_city(match.group("origin"))
+            destination = self._match_city(match.group("destination"))
+            if origin and destination:
+                return origin, destination
+
+        found_cities = self._find_cities(text)
+        if len(found_cities) >= 2:
+            return found_cities[0], found_cities[1]
+        if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan"}:
+            return None, found_cities[0]
+        return None, None
+
+    def _match_city(self, text: str) -> Optional[str]:
+        """从短文本中匹配城市名"""
+        for city in self.CITIES:
+            if city in text:
+                return city
+        return None
+
+    def _find_cities(self, text: str) -> List[str]:
+        """按文本出现顺序查找城市"""
+        matches = []
+        for city in self.CITIES:
+            index = text.find(city)
+            if index >= 0:
+                matches.append((index, city))
+        return [city for _, city in sorted(matches, key=lambda item: item[0])]
+
+    def _has_route_expression(self, text: str) -> bool:
+        """判断是否包含路线表达"""
+        return bool(re.search(r".+(?:到|去|飞).+", text))
+
+    def _extract_departure_date(self, text: str) -> Optional[str]:
+        """提取出发日期"""
+        full_date = re.search(r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})日?", text)
+        if full_date:
+            year, month, day = full_date.groups()
+            return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+
+        month_day = re.search(r"(?<!\d)(\d{1,2})月(\d{1,2})日?", text)
+        if month_day:
+            month, day = month_day.groups()
+            current_year = date.today().year
+            return f"{current_year:04d}-{int(month):02d}-{int(day):02d}"
+
+        relative_dates = {
+            "今天": 0,
+            "明天": 1,
+            "后天": 2,
+            "大后天": 3,
+            "下周": 7,
         }
+        for keyword, days in relative_dates.items():
+            if keyword in text:
+                target = date.today() + timedelta(days=days)
+                return target.isoformat()
+
+        return None
+
+    def _extract_duration(self, text: str) -> Optional[int]:
+        """提取旅行天数"""
+        digit_duration = re.search(r"(\d+)\s*(?:天|日)(?:游|旅行|旅游|行程|玩)?", text)
+        if digit_duration:
+            return int(digit_duration.group(1))
+
+        nights_pattern = re.search(r"(\d+)\s*天\s*(\d+)\s*晚", text)
+        if nights_pattern:
+            return int(nights_pattern.group(1))
+
+        chinese_duration = re.search(r"([一二两三四五六七八九十]+)\s*(?:天|日)(?:游|旅行|旅游|行程|玩)?", text)
+        if chinese_duration:
+            return self._chinese_number_to_int(chinese_duration.group(1))
+
+        chinese_nights = re.search(r"([一二两三四五六七八九十]+)\s*天\s*([一二两三四五六七八九十]+)\s*晚", text)
+        if chinese_nights:
+            return self._chinese_number_to_int(chinese_nights.group(1))
+
+        return None
+
+    def _extract_budget(self, text: str) -> Optional[float]:
+        """提取预算金额"""
+        patterns = [
+            r"预算\s*(\d+(?:\.\d+)?)\s*(?:元|块|人民币)?",
+            r"(\d+(?:\.\d+)?)\s*(?:元|块|人民币)?\s*(?:以内|以下|左右)",
+            r"人均\s*(\d+(?:\.\d+)?)\s*(?:元|块|人民币)?",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                return float(match.group(1))
+        return None
+
+    def _extract_travelers(self, text: str) -> Optional[int]:
+        """提取出行人数"""
+        digit_match = re.search(r"(\d+)\s*(?:个人|人|位)", text)
+        if digit_match:
+            return int(digit_match.group(1))
+
+        chinese_match = re.search(r"([一二两三四五六七八九十]+)\s*(?:个人|人|位)", text)
+        if chinese_match:
+            return self._chinese_number_to_int(chinese_match.group(1))
+
+        return None
+
+    def _extract_preferences(self, text: str) -> List[str]:
+        """提取显式偏好"""
+        preference_keywords = [
+            "靠窗", "靠过道", "经济舱", "商务舱", "头等舱", "不要红眼航班",
+            "便宜", "性价比", "舒适", "地铁附近", "离景点近", "自然风光",
+            "人文", "亲子", "慢节奏", "美食", "高评分", "干净",
+        ]
+        return [keyword for keyword in preference_keywords if keyword in text]
+
+    def _chinese_number_to_int(self, text: str) -> Optional[int]:
+        """将简单中文数字转换为整数，支持一到十九"""
+        if not text:
+            return None
+        if text in self.CHINESE_NUMBERS:
+            return self.CHINESE_NUMBERS[text]
+        if text.startswith("十"):
+            suffix = text[1:]
+            return 10 + self.CHINESE_NUMBERS.get(suffix, 0)
+        if "十" in text:
+            prefix, suffix = text.split("十", 1)
+            return self.CHINESE_NUMBERS.get(prefix, 0) * 10 + self.CHINESE_NUMBERS.get(suffix, 0)
+        return None
+
+    def _detect_missing_slots(self, intent: str, entities: Dict) -> List[str]:
+        """识别当前意图缺失的关键槽位"""
+        required_slots = self.REQUIRED_SLOTS.get(intent, [])
+        return [slot for slot in required_slots if not entities.get(slot)]
+
+    def _build_followup_question(self, missing_slots: List[str], entities: Dict) -> Optional[str]:
+        """根据缺失槽位生成追问"""
+        if not missing_slots:
+            return None
+
+        destination = entities.get("destination") or "目的地"
+        origin = entities.get("origin") or "出发地"
+
+        questions = {
+            "origin": f"请问您准备从哪个城市出发去{destination}？",
+            "destination": f"请问您计划去哪个城市旅行？",
+            "departure_date": f"请问您计划什么时候从{origin}出发？我可以根据出发日期为您查询更合适的航班和酒店。",
+            "duration": f"请问您计划在{destination}玩几天？这样我可以为您安排更合理的行程。",
+        }
+        return questions.get(missing_slots[0])
+
+    def _calculate_confidence(self, intent: str, entities: Dict, missing_slots: List[str]) -> float:
+        """计算规则解析置信度"""
+        if intent == "general_chat":
+            return 0.4
+
+        filled_slots = sum(1 for value in entities.values() if value)
+        score = 0.55 + min(filled_slots * 0.08, 0.32) - min(len(missing_slots) * 0.08, 0.24)
+        return round(max(0.1, min(score, 0.95)), 2)

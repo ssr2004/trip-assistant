@@ -2,26 +2,41 @@
 意图和实体数据模型
 使用Pydantic定义结构化数据
 """
-from typing import Optional, List
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
+
+
+IntentType = Literal[
+    "travel_plan",
+    "flight_search",
+    "hotel_search",
+    "attraction_search",
+    "policy_query",
+    "general_chat",
+]
 
 
 class TravelEntities(BaseModel):
     """旅行实体"""
+
     origin: Optional[str] = Field(None, description="出发地")
     destination: Optional[str] = Field(None, description="目的地")
     departure_date: Optional[str] = Field(None, description="出发日期")
     return_date: Optional[str] = Field(None, description="返回日期")
     duration: Optional[int] = Field(None, description="旅行天数")
-    budget: Optional[str] = Field(None, description="预算")
+    budget: Optional[float] = Field(None, description="预算")
+    travelers: Optional[int] = Field(None, description="出行人数")
     preferences: List[str] = Field(default_factory=list, description="偏好列表")
 
 
 class TravelIntent(BaseModel):
     """旅行意图"""
-    intent: str = Field(..., description="意图类型")
+
+    intent: IntentType = Field(..., description="意图类型")
     entities: TravelEntities = Field(default_factory=TravelEntities, description="实体信息")
     confidence: float = Field(0.0, description="置信度", ge=0, le=1)
+    missing_slots: List[str] = Field(default_factory=list, description="缺失的关键信息")
+    followup_question: Optional[str] = Field(None, description="针对缺失信息的追问")
 
 
 class FlightInfo(BaseModel):
