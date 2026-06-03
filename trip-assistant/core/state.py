@@ -27,3 +27,6 @@ class AgentState(TypedDict):
 
     # 记忆系统上下文
     memory_context: Dict
+
+    # 会话ID
+    session_id: Optional[str]

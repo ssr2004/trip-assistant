@@ -77,7 +77,11 @@ class TaskPlanner:
     def _template_plan(self, intent: Dict, context: Dict) -> TaskPlan:
         """基于模板和规则生成任务计划"""
         intent_type = intent.get("intent", "general_chat")
-        entities = intent.get("entities", {}) or {}
+        entities = dict(intent.get("entities", {}) or {})
+        entities["preferences"] = self._merge_preferences(
+            entities.get("preferences", []) or [],
+            context.get("memory", {}).get("preferences", {}) or context.get("memory", {}).get("user_preferences", {}),
+        )
         missing_slots = intent.get("missing_slots", []) or []
         user_query = context.get("query", "")
 
@@ -145,6 +149,45 @@ class TaskPlanner:
             need_user_input=False,
             summary="当前输入暂不需要规划工具任务。",
         )
+
+    def _merge_preferences(self, current_preferences: List[str], memory_preferences: Dict) -> List[str]:
+        """合并当前输入偏好和长期记忆偏好，当前输入优先保留顺序"""
+        merged = []
+        for preference in current_preferences or []:
+            if preference and preference not in merged:
+                merged.append(preference)
+
+        for preference in self._flatten_memory_preferences(memory_preferences):
+            if preference and preference not in merged:
+                merged.append(preference)
+        return merged
+
+    def _flatten_memory_preferences(self, memory_preferences: Dict) -> List[str]:
+        """将长期记忆偏好结构拉平成任务规划可用的偏好列表"""
+        if not isinstance(memory_preferences, dict):
+            return []
+
+        preference_fields = [
+            "travel_styles",
+            "hotel_preferences",
+            "transport_preferences",
+            "attraction_preferences",
+            "food_preferences",
+            "raw_preferences",
+        ]
+        flattened = []
+        for field in preference_fields:
+            values = memory_preferences.get(field, [])
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if value and value not in flattened:
+                    flattened.append(value)
+
+        budget_preference = memory_preferences.get("budget_preference")
+        if budget_preference and budget_preference not in flattened:
+            flattened.append(budget_preference)
+        return flattened
 
     def _build_followup_plan(
         self,

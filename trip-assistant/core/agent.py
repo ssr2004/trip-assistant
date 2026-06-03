@@ -69,7 +69,8 @@ class TravelAgent:
         rag_results = self.rag_retriever.retrieve(message, top_k=3)
 
         # 从记忆系统检索相关信息
-        memory_context = self.memory_manager.retrieve(message)
+        session_id = state.get("session_id", "default")
+        memory_context = self.memory_manager.retrieve(message, session_id)
 
         return {
             "rag_context": rag_results,
@@ -155,6 +156,7 @@ class TravelAgent:
         self.memory_manager.save(
             user_message=state["messages"][-1].content,
             ai_message=response,
+            session_id=state.get("session_id", "default"),
         )
 
         return {"messages": [AIMessage(content=response)]}
@@ -343,6 +345,7 @@ class TravelAgent:
             "task_results": [],
             "rag_context": [],
             "memory_context": {},
+            "session_id": session_id,
         }
 
         result = await self.graph.ainvoke(initial_state, config)
