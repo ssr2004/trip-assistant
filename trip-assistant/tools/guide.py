@@ -56,7 +56,7 @@ class GuideTool(BaseTool):
         )
 
     def _search_documents(self, query: str, destination: str, documents: List[Dict]) -> List[Dict]:
-        """基于目的地和关键词检索攻略文档"""
+        """基于目的地和关键词检索攻略文档chunk"""
         return LocalMarkdownRetriever().search(
             query=query,
             documents=documents,
@@ -72,8 +72,10 @@ class GuideTool(BaseTool):
             terms.append(destination)
 
         keywords = [
-            "景点", "攻略", "三天", "3天", "路线", "美食", "酒店", "交通", "西湖",
-            "灵隐寺", "西溪", "宋城", "预算", "注意事项", "行程",
+            "杭州", "成都", "厦门", "三亚", "景点", "攻略", "三天", "3天", "路线", "美食",
+            "小吃", "火锅", "酒店", "住宿", "交通", "西湖", "灵隐寺", "西溪", "宋城",
+            "预算", "注意事项", "行程", "海边", "亲子", "情侣", "拍照", "自然风光", "人文历史",
+            "放松", "度假", "沙滩", "鼓浪屿", "亚龙湾", "春熙路", "宽窄巷子",
         ]
         for keyword in keywords:
             if keyword in query:
@@ -89,5 +91,9 @@ class GuideTool(BaseTool):
         target = destination or "相关目的地"
         best_result = results[0]
         title = best_result.get("title") or "本地攻略文档"
+        section = best_result.get("section")
+        reference = f"《{title}》"
+        if section and section != title:
+            reference = f"《{title}》的“{section}”部分"
         excerpt = best_result.get("excerpt") or best_result.get("content", "")
-        return f"根据本地攻略文档《{title}》，为您检索到{target}相关建议：\n{excerpt}"
+        return f"根据本地攻略文档{reference}，为您检索到{target}相关建议：\n{excerpt}"

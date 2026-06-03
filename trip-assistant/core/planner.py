@@ -143,6 +143,15 @@ class TaskPlanner:
                 reason="用户询问退改签、取消或旅行政策，需要从政策文档中检索答案。",
             )
 
+        if intent_type == "guide_query":
+            return self._build_single_tool_plan(
+                intent_type=intent_type,
+                tool="retrieve_guide",
+                name="检索旅行攻略",
+                params={"query": user_query, "destination": entities.get("destination")},
+                reason="用户询问目的地玩法、攻略、美食或路线，需要从攻略文档中检索答案。",
+            )
+
         return TaskPlan(
             intent=intent_type,
             tasks=[],

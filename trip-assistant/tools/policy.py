@@ -54,7 +54,7 @@ class PolicyTool(BaseTool):
         )
 
     def _search_documents(self, query: str, documents: List[Dict]) -> List[Dict]:
-        """基于关键词重叠检索政策文档"""
+        """基于关键词重叠检索政策文档chunk"""
         return LocalMarkdownRetriever().search(
             query=query,
             documents=documents,
@@ -66,7 +66,10 @@ class PolicyTool(BaseTool):
     def _extract_terms(self, query: str) -> List[str]:
         """提取政策查询关键词"""
         terms = []
-        keywords = ["退票", "退", "改签", "取消", "酒店", "机票", "航班", "政策", "手续费", "退款"]
+        keywords = [
+            "退票", "退", "退房", "改签", "取消", "酒店", "机票", "航班", "延误",
+            "政策", "手续费", "退款", "门票", "景点", "保险", "突发", "疾病", "赔付",
+        ]
         for keyword in keywords:
             if keyword in query:
                 terms.append(keyword)
@@ -81,5 +84,9 @@ class PolicyTool(BaseTool):
 
         best_result = results[0]
         title = best_result.get("title") or "本地政策文档"
+        section = best_result.get("section")
+        reference = f"《{title}》"
+        if section and section != title:
+            reference = f"《{title}》的“{section}”部分"
         best_excerpt = best_result.get("excerpt") or best_result.get("content", "")
-        return f"根据本地政策文档《{title}》，关于“{query}”可参考以下内容：\n{best_excerpt}"
+        return f"根据本地政策文档{reference}，关于“{query}”可参考以下内容：\n{best_excerpt}"

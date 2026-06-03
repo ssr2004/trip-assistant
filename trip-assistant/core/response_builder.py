@@ -37,6 +37,8 @@ class ResponseBuilder:
             return self._format_travel_plan(intent or {}, task_results, memory_context)
         if intent_type == "policy_query":
             return self._format_policy_response(task_results)
+        if intent_type == "guide_query":
+            return self._format_guide_query_response(task_results)
         if intent_type == "flight_search":
             return self._format_single_tool_response("航班推荐", task_results, "search_flights")
         if intent_type == "hotel_search":
@@ -158,6 +160,21 @@ class ResponseBuilder:
                 lines.append(self._format_source_reference(source, "本地政策文档"))
         return "\n".join(lines)
 
+    def _format_guide_query_response(self, task_results: List[Dict]) -> str:
+        """格式化攻略知识查询回复"""
+        guide_result = self._find_result_by_tool(task_results, "retrieve_guide")
+        data = self._result_data(guide_result) if guide_result else {}
+        answer = data.get("answer")
+        sources = data.get("sources") or []
+
+        lines = ["关于您的旅行攻略问题，我查到以下信息："]
+        lines.append(answer or "暂未检索到明确攻略答案，建议补充更具体的目的地或玩法需求。")
+        if sources:
+            lines.append("\n资料来源：")
+            for source in sources[:3]:
+                lines.append(self._format_source_reference(source, "本地攻略文档"))
+        return "\n".join(lines)
+
     def _format_single_tool_response(self, title: str, task_results: List[Dict], tool_name: str) -> str:
         """格式化单工具查询回复"""
         result = self._find_result_by_tool(task_results, tool_name)
@@ -191,9 +208,12 @@ class ResponseBuilder:
         return "\n".join(lines)
 
     def _format_source_reference(self, source: Dict, default_source: str) -> str:
-        """格式化结构化RAG来源，优先展示标题和来源路径"""
+        """格式化结构化RAG来源，优先展示标题、章节和来源路径"""
         title = source.get("title")
+        section = source.get("section")
         source_name = source.get("source") or default_source
+        if title and section and section != title:
+            return f"- {title} / {section}：{source_name}"
         if title:
             return f"- {title}：{source_name}"
         return f"- {source_name}"

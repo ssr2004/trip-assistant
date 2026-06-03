@@ -17,6 +17,10 @@ class RetrievedChunk(BaseModel):
     title: Optional[str] = Field(None, description="文档标题")
     matched_terms: List[str] = Field(default_factory=list, description="命中的关键词")
     excerpt: str = Field("", description="可展示的引用片段")
+    chunk_id: str = Field("", description="知识片段唯一标识")
+    document_id: str = Field("", description="所属文档标识")
+    section: Optional[str] = Field(None, description="所属Markdown章节")
+    chunk_index: int = Field(0, description="片段在文档中的序号")
 
 
 class RetrievalResult(BaseModel):

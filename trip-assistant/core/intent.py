@@ -45,6 +45,7 @@ class IntentParser:
         "hotel_search": ["destination"],
         "attraction_search": ["destination"],
         "policy_query": [],
+        "guide_query": [],
         "general_chat": [],
     }
 
@@ -100,14 +101,23 @@ class IntentParser:
 
     def _detect_intent(self, text: str) -> str:
         """基于规则识别旅行意图"""
-        if any(keyword in text for keyword in ["退票", "改签", "取消政策", "退改", "政策", "规定", "能退吗"]):
+        if any(keyword in text for keyword in [
+            "退票", "改签", "取消政策", "退改", "政策", "规定", "能退吗", "能取消吗", "可以取消吗",
+            "门票可以退", "门票能退", "退款", "退房", "航班延误",
+        ]):
             return "policy_query"
-
-        if any(keyword in text for keyword in ["酒店", "住宿", "宾馆", "民宿", "住哪里", "住哪"]):
-            return "hotel_search"
 
         if any(keyword in text for keyword in ["航班", "飞机", "机票"]):
             return "flight_search"
+
+        if self._has_route_expression(text) and any(keyword in text for keyword in ["去", "到", "玩", "游"]):
+            return "travel_plan"
+
+        if self._is_guide_query(text):
+            return "guide_query"
+
+        if any(keyword in text for keyword in ["酒店", "住宿", "宾馆", "民宿", "住哪里", "住哪"]):
+            return "hotel_search"
 
         if re.search(r".+飞.+", text) and not any(keyword in text for keyword in ["玩", "旅游", "旅行", "行程"]):
             return "flight_search"
@@ -118,10 +128,17 @@ class IntentParser:
         if any(keyword in text for keyword in ["旅行", "旅游", "行程", "计划", "安排", "规划"]):
             return "travel_plan"
 
-        if self._has_route_expression(text) and any(keyword in text for keyword in ["去", "到", "玩", "游"]):
-            return "travel_plan"
-
         return "general_chat"
+
+    def _is_guide_query(self, text: str) -> bool:
+        """判断是否为目的地攻略知识查询"""
+        if not self._find_cities(text):
+            return False
+        guide_keywords = [
+            "攻略", "怎么玩", "怎么安排", "有什么好吃", "美食", "好吃", "海边", "拍照",
+            "适合情侣", "适合亲子", "三天", "3天", "路线", "注意事项",
+        ]
+        return any(keyword in text for keyword in guide_keywords)
 
     def _extract_entities(self, text: str, intent: str) -> Dict:
         """提取旅行实体"""
@@ -158,7 +175,7 @@ class IntentParser:
         found_cities = self._find_cities(text)
         if len(found_cities) >= 2:
             return found_cities[0], found_cities[1]
-        if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan"}:
+        if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan", "guide_query"}:
             return None, found_cities[0]
         return None, None
 
@@ -296,7 +313,7 @@ class IntentParser:
                     content=(
                         "请解析下面的旅行需求，并返回严格JSON。\n"
                         "JSON字段必须包含：intent、entities、confidence、missing_slots、followup_question。\n"
-                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、general_chat。\n"
+                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、guide_query、general_chat。\n"
                         "entities必须包含 origin、destination、departure_date、return_date、duration、budget、travelers、preferences。\n"
                         f"用户输入：{user_input}\n"
                         f"规则解析结果：{json.dumps(rule_result, ensure_ascii=False)}"
