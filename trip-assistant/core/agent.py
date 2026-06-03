@@ -58,7 +58,7 @@ class TravelAgent:
     async def _parse_intent(self, state: AgentState) -> Dict:
         """解析用户意图"""
         message = state["messages"][-1].content
-        intent = self.intent_parser.parse(message)
+        intent = await self.intent_parser.parse_async(message)
         return {"intent": intent}
 
     async def _retrieve_context(self, state: AgentState) -> Dict:

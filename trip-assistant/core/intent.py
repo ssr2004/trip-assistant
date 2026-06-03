@@ -3,14 +3,19 @@
 解析用户输入的自然语言，提取意图、实体和缺失槽位
 """
 from datetime import date, timedelta
+import json
 import re
 from typing import Dict, List, Optional
 
+from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.llm.prompts import INTENT_FALLBACK_SYSTEM_PROMPT
 from models.intent import TravelIntent
 
 
 class IntentParser:
     """意图解析器"""
+
+    FALLBACK_CONFIDENCE_THRESHOLD = 0.55
 
     CITIES = [
         "北京", "上海", "广州", "深圳", "成都", "杭州", "西安", "重庆",
@@ -43,6 +48,10 @@ class IntentParser:
         "general_chat": [],
     }
 
+    def __init__(self, llm_client: Optional[LLMClient] = None):
+        """初始化意图解析器"""
+        self.llm_client = llm_client or LLMClient()
+
     def parse(self, user_input: str) -> Dict:
         """
         解析用户输入
@@ -67,6 +76,23 @@ class IntentParser:
             followup_question=followup_question,
         )
         return parsed.model_dump()
+
+    async def parse_async(self, user_input: str) -> Dict:
+        """
+        异步解析用户输入，规则优先，必要时尝试LLM fallback
+
+        Args:
+            user_input: 用户输入的文本
+
+        Returns:
+            解析后的意图字典
+        """
+        rule_result = self.parse(user_input)
+        if not self._should_use_llm_fallback(rule_result):
+            return rule_result
+
+        llm_result = await self._llm_fallback(user_input, rule_result)
+        return llm_result or rule_result
 
     def _normalize_text(self, text: str) -> str:
         """标准化输入文本"""
@@ -250,6 +276,83 @@ class IntentParser:
             prefix, suffix = text.split("十", 1)
             return self.CHINESE_NUMBERS.get(prefix, 0) * 10 + self.CHINESE_NUMBERS.get(suffix, 0)
         return None
+
+    def _should_use_llm_fallback(self, rule_result: Dict) -> bool:
+        """判断是否需要尝试LLM fallback"""
+        if not self.llm_client.available:
+            return False
+
+        intent = rule_result.get("intent")
+        confidence = rule_result.get("confidence", 0)
+        return intent == "general_chat" or confidence < self.FALLBACK_CONFIDENCE_THRESHOLD
+
+    async def _llm_fallback(self, user_input: str, rule_result: Dict) -> Optional[Dict]:
+        """调用LLM补充意图解析，失败时返回None"""
+        request = LLMRequest(
+            messages=[
+                LLMMessage(role="system", content=INTENT_FALLBACK_SYSTEM_PROMPT),
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "请解析下面的旅行需求，并返回严格JSON。\n"
+                        "JSON字段必须包含：intent、entities、confidence、missing_slots、followup_question。\n"
+                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、general_chat。\n"
+                        "entities必须包含 origin、destination、departure_date、return_date、duration、budget、travelers、preferences。\n"
+                        f"用户输入：{user_input}\n"
+                        f"规则解析结果：{json.dumps(rule_result, ensure_ascii=False)}"
+                    ),
+                ),
+            ],
+            response_format="json_object",
+            metadata={"fallback_for": "intent_parse"},
+        )
+        response = await self.llm_client.chat(request)
+        if not response.success:
+            return None
+
+        parsed_json = self._parse_llm_json(response.content)
+        if not parsed_json:
+            return None
+
+        try:
+            validated = TravelIntent.model_validate(parsed_json)
+        except Exception:
+            return None
+
+        return self._normalize_llm_intent(validated)
+
+    def _parse_llm_json(self, content: str) -> Optional[Dict]:
+        """解析LLM返回的JSON，兼容Markdown代码块"""
+        if not content:
+            return None
+
+        text = content.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _normalize_llm_intent(self, intent: TravelIntent) -> Dict:
+        """规范化LLM解析结果，补齐缺失槽位和追问"""
+        result = intent.model_dump()
+        entities = result.get("entities", {}) or {}
+        missing_slots = self._detect_missing_slots(result.get("intent"), entities)
+        result["missing_slots"] = missing_slots
+        result["followup_question"] = result.get("followup_question") or self._build_followup_question(
+            missing_slots,
+            entities,
+        )
+        result["confidence"] = round(max(result.get("confidence", 0), self.FALLBACK_CONFIDENCE_THRESHOLD), 2)
+        return result
 
     def _detect_missing_slots(self, intent: str, entities: Dict) -> List[str]:
         """识别当前意图缺失的关键槽位"""
