@@ -39,6 +39,8 @@ class ResponseBuilder:
             return self._format_policy_response(task_results)
         if intent_type == "guide_query":
             return self._format_guide_query_response(task_results)
+        if intent_type == "dynamic_knowledge_query":
+            return self._format_dynamic_knowledge_response(task_results)
         if intent_type == "flight_search":
             return self._format_single_tool_response("航班推荐", task_results, "search_flights")
         if intent_type == "hotel_search":
@@ -174,6 +176,20 @@ class ResponseBuilder:
             lines.append("\n资料来源：")
             for source in sources[:3]:
                 lines.append(self._format_source_reference(source, "本地攻略文档"))
+        return "\n".join(lines)
+
+    def _format_dynamic_knowledge_response(self, task_results: List[Dict]) -> str:
+        """格式化动态外部知识追问回复"""
+        result = self._find_result_by_task_type(task_results, "dynamic_rag_query")
+        data = result.get("result", {}) if result else {}
+        answer = data.get("answer") or "我暂时没有在本轮对话的外部景点数据中找到相关信息。"
+        sources = data.get("sources") or []
+
+        lines = [answer]
+        if sources:
+            lines.append("\n资料来源：")
+            for source in sources[:3]:
+                lines.append(self._format_source_reference(source, "外部景点数据"))
         return "\n".join(lines)
 
     def _format_single_tool_response(self, title: str, task_results: List[Dict], tool_name: str) -> str:

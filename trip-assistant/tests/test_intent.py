@@ -51,6 +51,28 @@ def test_parse_attraction_search():
     assert result["entities"]["destination"] == "杭州"
 
 
+def test_parse_dynamic_knowledge_query_for_poi_detail():
+    """解析外部动态知识景点详情追问"""
+    parser = IntentParser()
+
+    result = parser.parse("西湖在哪里？")
+
+    assert result["intent"] == "dynamic_knowledge_query"
+    assert result["missing_slots"] == []
+
+
+
+def test_parse_dynamic_knowledge_query_for_previous_recommendations():
+    """解析刚才推荐景点追问"""
+    parser = IntentParser()
+
+    result = parser.parse("刚才推荐的景点有哪些？")
+
+    assert result["intent"] == "dynamic_knowledge_query"
+    assert result["missing_slots"] == []
+
+
+
 def test_parse_policy_query():
     """解析政策查询需求"""
     parser = IntentParser()

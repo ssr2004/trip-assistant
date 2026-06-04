@@ -200,6 +200,38 @@ def test_build_policy_response():
     assert "flight_policy.md" in response
 
 
+def test_build_dynamic_knowledge_response():
+    """动态外部知识追问输出答案和来源"""
+    builder = ResponseBuilder()
+    response = builder.build(
+        intent={"intent": "dynamic_knowledge_query"},
+        task_results=[
+            {
+                "task": {"task_type": "dynamic_rag_query", "name": "检索动态外部知识"},
+                "success": True,
+                "result": {
+                    "query": "西湖在哪里？",
+                    "answer": "根据刚才推荐的外部景点数据，我查到：\n\n西湖：\n- 地址：杭州市西湖区\n- 坐标：120.1551,30.2741",
+                    "sources": [
+                        {
+                            "title": "西湖",
+                            "source": "api/amap/attraction/mock-西湖",
+                            "type": "attraction",
+                        }
+                    ],
+                },
+                "error": None,
+            }
+        ],
+    )
+
+    assert "杭州市西湖区" in response
+    assert "120.1551,30.2741" in response
+    assert "资料来源" in response
+    assert "api/amap/attraction/mock-西湖" in response
+
+
+
 def test_build_single_attraction_response_shows_external_sources():
     """单独景点查询展示外部POI来源"""
     builder = ResponseBuilder()

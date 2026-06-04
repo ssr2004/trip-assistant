@@ -28,6 +28,7 @@ class TravelAgent:
         self.memory_manager = MemoryManager()
         self.rag_retriever = RAGRetriever()
         self.dynamic_rag_store = DynamicRAGStore()
+        self.dynamic_rag_stores = {"default": self.dynamic_rag_store}
         self.tool_registry = ToolRegistry()
         self.response_builder = ResponseBuilder()
 
@@ -114,6 +115,15 @@ class TravelAgent:
                 self._index_task_result(task_result, result_by_task_id)
                 continue
 
+            if task_type == "dynamic_rag_query":
+                task_result = self._build_internal_result(
+                    task,
+                    self._query_dynamic_rag(task, state.get("session_id", "default")),
+                )
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
+                continue
+
             tool_name = task.get("tool")
             params = self._inject_dependency_context(
                 task=task,
@@ -147,7 +157,11 @@ class TravelAgent:
 
         messages = state.get("messages", [])
         query = messages[-1].content if messages else ""
-        dynamic_rag_context = self._collect_dynamic_rag_context(results, query)
+        dynamic_rag_context = self._collect_dynamic_rag_context(
+            results,
+            query,
+            state.get("session_id", "default"),
+        )
         return {"task_results": results, "dynamic_rag_context": dynamic_rag_context}
 
     async def _generate_response(self, state: AgentState) -> Dict:
@@ -200,8 +214,9 @@ class TravelAgent:
             return result.model_dump()
         return result
 
-    def _collect_dynamic_rag_context(self, task_results: List[Dict], query: str) -> Dict:
+    def _collect_dynamic_rag_context(self, task_results: List[Dict], query: str, session_id: str) -> Dict:
         """收集工具返回的外部RAG文档并写入动态存储"""
+        store = self._get_dynamic_rag_store(session_id)
         documents = []
         for task_result in task_results:
             data = self._extract_result_data(task_result)
@@ -212,14 +227,108 @@ class TravelAgent:
                 documents.extend(item for item in rag_documents if isinstance(item, dict))
 
         if documents:
-            self.dynamic_rag_store.add_documents(documents)
+            store.add_documents(documents)
 
-        sources = self.dynamic_rag_store.search(query, top_k=3) if query else []
+        sources = store.search(query, top_k=3) if query else []
         return {
             "documents": documents,
             "sources": sources,
-            "document_count": len(self.dynamic_rag_store.list_documents()),
+            "document_count": len(store.list_documents()),
         }
+
+    def _get_dynamic_rag_store(self, session_id: str) -> DynamicRAGStore:
+        """获取会话级动态RAG存储"""
+        key = session_id or "default"
+        if key not in self.dynamic_rag_stores:
+            self.dynamic_rag_stores[key] = DynamicRAGStore()
+        self.dynamic_rag_store = self.dynamic_rag_stores[key]
+        return self.dynamic_rag_stores[key]
+
+    def _query_dynamic_rag(self, task: Dict, session_id: str) -> Dict:
+        """基于会话动态RAG文档回答追问"""
+        query = (task.get("params", {}) or {}).get("query", "")
+        store = self._get_dynamic_rag_store(session_id)
+        documents = store.list_documents()
+        if not documents:
+            return {
+                "query": query,
+                "answer": "我暂时没有在本轮对话的外部景点数据中找到相关信息。您可以先让我查询目的地景点，例如“杭州有什么好玩的”。",
+                "sources": [],
+                "documents": [],
+            }
+
+        if self._is_dynamic_list_query(query):
+            selected_documents = documents[:5]
+            answer = self._build_dynamic_list_answer(selected_documents, include_source="来源" in query)
+            return {
+                "query": query,
+                "answer": answer,
+                "sources": selected_documents[:3],
+                "documents": selected_documents,
+            }
+
+        sources = store.search(query, top_k=3)
+        if not sources:
+            return {
+                "query": query,
+                "answer": "我暂时没有在本轮对话的外部景点数据中找到相关信息。您可以换一个景点名称或先查询目的地景点。",
+                "sources": [],
+                "documents": documents,
+            }
+
+        matched_documents = self._match_dynamic_documents(sources, documents)
+        return {
+            "query": query,
+            "answer": self._build_dynamic_detail_answer(matched_documents or sources),
+            "sources": sources,
+            "documents": documents,
+        }
+
+    def _is_dynamic_list_query(self, query: str) -> bool:
+        """判断是否询问刚才推荐的景点列表或来源"""
+        return any(keyword in query for keyword in ["刚才推荐", "刚刚推荐", "推荐的景点", "这些景点", "有哪些"])
+
+    def _build_dynamic_list_answer(self, documents: List[Dict], include_source: bool = False) -> str:
+        """构建动态景点列表回答"""
+        lines = ["根据刚才推荐的外部景点数据，目前记录的景点有："]
+        for index, document in enumerate(documents, start=1):
+            line = f"{index}. {document.get('title', '景点')}"
+            if include_source:
+                line += f"：{document.get('source', '外部景点数据')}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _match_dynamic_documents(self, sources: List[Dict], documents: List[Dict]) -> List[Dict]:
+        """根据检索片段匹配完整动态文档"""
+        matched = []
+        for source in sources:
+            document_id = source.get("document_id")
+            source_path = source.get("source")
+            title = source.get("title")
+            for document in documents:
+                if document in matched:
+                    continue
+                if (
+                    document.get("document_id") == document_id
+                    or document.get("source") == source_path
+                    or document.get("title") == title
+                ):
+                    matched.append(document)
+                    break
+        return matched
+
+    def _build_dynamic_detail_answer(self, sources: List[Dict]) -> str:
+        """构建动态景点详情回答"""
+        lines = ["根据刚才推荐的外部景点数据，我查到："]
+        for source in sources[:3]:
+            title = source.get("title") or "相关景点"
+            excerpt = source.get("content") or source.get("excerpt") or "暂无更多详情。"
+            lines.append(f"\n{title}：")
+            for line in excerpt.splitlines():
+                cleaned = line.strip().lstrip("#").strip().lstrip("-").strip()
+                if cleaned and cleaned != title:
+                    lines.append(f"- {cleaned}")
+        return "\n".join(lines)
 
     def _inject_dependency_context(
         self,
@@ -392,5 +501,6 @@ class TravelAgent:
         return self.memory_manager.get_history(session_id)
 
     def clear_history(self, session_id: str):
-        """清除对话历史"""
+        """清除对话历史和会话动态RAG文档"""
         self.memory_manager.clear_history(session_id)
+        self.dynamic_rag_stores.pop(session_id or "default", None)

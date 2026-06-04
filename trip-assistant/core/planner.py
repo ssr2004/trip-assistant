@@ -13,7 +13,7 @@ from models.task import PlanningTask, TaskPlan
 class TaskPlanner:
     """任务规划器"""
 
-    ALLOWED_TASK_TYPES = {"ask_user", "tool_call", "recommend_destination", "generate_itinerary"}
+    ALLOWED_TASK_TYPES = {"ask_user", "tool_call", "recommend_destination", "generate_itinerary", "dynamic_rag_query"}
     ALLOWED_TOOLS = {
         "search_flights",
         "search_hotels",
@@ -151,6 +151,9 @@ class TaskPlanner:
                 params={"query": user_query, "destination": entities.get("destination")},
                 reason="用户询问目的地玩法、攻略、美食或路线，需要从攻略文档中检索答案。",
             )
+
+        if intent_type == "dynamic_knowledge_query":
+            return self._build_dynamic_rag_plan(intent_type, user_query)
 
         return TaskPlan(
             intent=intent_type,
@@ -340,6 +343,23 @@ class TaskPlanner:
             tasks=tasks,
             need_user_input=False,
             summary="目的地明确，规划航班、酒店、景点、攻略检索和行程生成任务。",
+        )
+
+    def _build_dynamic_rag_plan(self, intent_type: str, user_query: str) -> TaskPlan:
+        """构建动态外部知识检索任务"""
+        task = PlanningTask(
+            task_id="dynamic_rag_query_1",
+            task_type="dynamic_rag_query",
+            name="检索动态外部知识",
+            priority=1,
+            params={"query": user_query},
+            reason="用户基于刚才推荐的外部景点继续追问，需要从会话动态RAG文档中检索答案。",
+        )
+        return TaskPlan(
+            intent=intent_type,
+            tasks=[task],
+            need_user_input=False,
+            summary="规划任务：检索动态外部知识。",
         )
 
     def _build_single_tool_plan(

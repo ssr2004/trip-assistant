@@ -13,6 +13,7 @@ IntentType = Literal[
     "attraction_search",
     "policy_query",
     "guide_query",
+    "dynamic_knowledge_query",
     "general_chat",
 ]
 

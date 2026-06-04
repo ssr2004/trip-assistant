@@ -67,6 +67,44 @@ async def test_attraction_search_shows_external_rag_source(agent):
 
 
 @pytest.mark.asyncio
+async def test_agent_answers_dynamic_rag_followup(agent):
+    """Agent支持基于上一轮外部景点数据的追问"""
+    session_id = "test-session-dynamic-followup"
+
+    first_response = await agent.arun("杭州有什么好玩的", session_id)
+    second_response = await agent.arun("西湖在哪里？", session_id)
+
+    assert "西湖" in first_response
+    assert "杭州市西湖区" in second_response
+    assert "120.1551,30.2741" in second_response
+    assert "资料来源" in second_response
+    assert "api/amap/attraction" in second_response
+
+
+@pytest.mark.asyncio
+async def test_agent_lists_previous_dynamic_recommendations(agent):
+    """Agent可以回答刚才推荐过哪些景点"""
+    session_id = "test-session-dynamic-list"
+
+    await agent.arun("杭州有什么好玩的", session_id)
+    response = await agent.arun("刚才推荐的景点有哪些？", session_id)
+
+    assert "根据刚才推荐的外部景点数据" in response
+    assert "西湖" in response
+    assert "灵隐寺" in response
+
+
+@pytest.mark.asyncio
+async def test_dynamic_rag_isolated_by_session(agent):
+    """不同会话的动态RAG文档互相隔离"""
+    await agent.arun("杭州有什么好玩的", "test-session-with-dynamic-rag")
+
+    response = await agent.arun("西湖在哪里？", "test-session-without-dynamic-rag")
+
+    assert "暂时没有在本轮对话的外部景点数据中找到相关信息" in response
+
+
+@pytest.mark.asyncio
 async def test_agent_collects_external_rag_documents(agent):
     """Agent执行景点工具后收集外部RAG动态文档"""
     result = await agent._execute_tasks({
