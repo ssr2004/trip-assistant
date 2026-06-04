@@ -130,7 +130,7 @@ class TravelAgent:
             if task_type == "revise_itinerary":
                 task_result = self._build_internal_result(
                     task,
-                    self._revise_itinerary(task, state.get("session_id", "default")),
+                    await self._revise_itinerary(task, state.get("session_id", "default")),
                 )
                 results.append(task_result)
                 self._index_task_result(task_result, result_by_task_id)
@@ -378,7 +378,7 @@ class TravelAgent:
                     lines.append(f"- {cleaned}")
         return "\n".join(lines)
 
-    def _revise_itinerary(self, task: Dict, session_id: str) -> Dict:
+    async def _revise_itinerary(self, task: Dict, session_id: str) -> Dict:
         """基于会话历史行程执行规则型修订"""
         query = (task.get("params", {}) or {}).get("query", "")
         context = self.session_itinerary_contexts.get(session_id or "default")
@@ -397,7 +397,9 @@ class TravelAgent:
         target_names = self._extract_revision_attractions(query, attraction_names)
         target_day = self._extract_revision_day(query)
 
-        if self._is_replace_revision(query):
+        if self._is_route_optimization_revision(query):
+            result = await self._apply_route_optimization_revision(query, itinerary, revised_context, target_day)
+        elif self._is_replace_revision(query):
             result = self._apply_replace_revision(query, itinerary, revised_context, target_names)
         elif self._is_remove_revision(query):
             result = self._apply_remove_revision(query, itinerary, target_names)
@@ -421,6 +423,7 @@ class TravelAgent:
             "summary": result.get("summary"),
             "message": result.get("message"),
             "itinerary": itinerary,
+            "route_summary": result.get("route_summary"),
             "sources": ["上一轮旅行方案", "会话动态景点数据"],
         }
 
@@ -464,6 +467,53 @@ class TravelAgent:
     def _is_replace_revision(self, query: str) -> bool:
         """判断是否为替换景点请求"""
         return any(keyword in query for keyword in ["换一个", "替换"])
+
+    def _is_route_optimization_revision(self, query: str) -> bool:
+        """判断是否为路线顺序优化请求"""
+        return any(keyword in query for keyword in ["排一下顺序", "排序", "按距离", "按路线", "路线顺序", "优化路线", "优化一下"])
+
+    async def _apply_route_optimization_revision(
+        self,
+        query: str,
+        itinerary: List[Dict],
+        context: Dict,
+        target_day: Optional[int],
+    ) -> Dict:
+        """按路线距离优化某天景点顺序"""
+        day = self._select_route_optimization_day(query, itinerary, context, target_day)
+        if not day:
+            return {"success": False, "action": "route_optimize", "message": "当前行程中没有可优化路线的景点安排。"}
+
+        places = self._places_for_day(day, context)
+        if len(places) < 2:
+            return {"success": False, "action": "route_optimize", "message": "该天至少需要两个带位置的景点才能优化顺序。"}
+
+        route_result = await self.tool_registry.execute(
+            "optimize_route_order",
+            {
+                "places": places,
+                "start_place": places[0].get("name"),
+                "mode": "walking",
+            },
+        )
+        if not route_result.get("success"):
+            return {"success": False, "action": "route_optimize", "message": route_result.get("error") or "路线优化失败。"}
+
+        route_data = route_result.get("data", {})
+        ordered_names = [place.get("name") for place in route_data.get("ordered_places", []) if place.get("name")]
+        day["activities"] = self._replace_day_places(day.get("activities", []), ordered_names, places)
+        return {
+            "success": True,
+            "action": "route_optimize",
+            "summary": f"已按距离优化第{day.get('day')}天景点顺序。",
+            "route_summary": {
+                "day": day.get("day"),
+                "ordered_places": ordered_names,
+                "segments": route_data.get("segments", []),
+                "total_distance": route_data.get("total_distance", 0),
+                "total_duration": route_data.get("total_duration", 0),
+            },
+        }
 
     def _apply_move_revision(self, query: str, itinerary: List[Dict], target_names: List[str], target_day: int) -> Dict:
         """将景点移动到指定天数"""
@@ -536,6 +586,60 @@ class TravelAgent:
             if name != removed_name:
                 return name
         return None
+
+    def _select_route_optimization_day(
+        self,
+        query: str,
+        itinerary: List[Dict],
+        context: Dict,
+        target_day: Optional[int],
+    ) -> Optional[Dict]:
+        """选择需要做路线优化的行程日"""
+        if target_day:
+            return self._find_day(itinerary, target_day)
+        days_with_counts = [(day, len(self._places_for_day(day, context))) for day in itinerary]
+        candidates = [(day, count) for day, count in days_with_counts if count >= 2]
+        if not candidates:
+            return None
+        for day, count in candidates:
+            if day.get("day") == 2:
+                return day
+        return max(candidates, key=lambda item: item[1])[0]
+
+    def _places_for_day(self, day: Dict, context: Dict) -> List[Dict]:
+        """从某天行程中提取可路线优化的景点"""
+        known_places = self._known_places(context)
+        places = []
+        for activity in day.get("activities", []) or []:
+            activity_text = str(activity)
+            for place in known_places:
+                name = place.get("name")
+                if name and name in activity_text and name not in [item.get("name") for item in places]:
+                    places.append(place)
+        return places
+
+    def _known_places(self, context: Dict) -> List[Dict]:
+        """获取带名称和坐标的已知景点"""
+        places = []
+        for attraction in context.get("attractions", []) or []:
+            name = attraction.get("name")
+            if not name:
+                continue
+            places.append({
+                "name": name,
+                "location": attraction.get("location"),
+                "category": attraction.get("category"),
+            })
+        return places
+
+    def _replace_day_places(self, activities: List[str], ordered_names: List[str], places: List[Dict]) -> List[str]:
+        """在保留非景点活动的同时替换某天景点顺序"""
+        place_names = [place.get("name") for place in places]
+        non_place_activities = [
+            activity for activity in activities
+            if not any(name and name in str(activity) for name in place_names)
+        ]
+        return [*non_place_activities, *ordered_names]
 
     def _find_day(self, itinerary: List[Dict], day_number: int) -> Optional[Dict]:
         """按天数查找行程日"""

@@ -147,6 +147,7 @@ async def test_registry_executes_new_tools():
     assert "retrieve_policy" in tools
     assert "retrieve_guide" in tools
     assert "generate_itinerary" in tools
+    assert "optimize_route_order" in tools
 
     flight_result = await registry.execute("search_flights", {"origin": "郑州", "destination": "杭州"})
     hotel_result = await registry.execute("search_hotels", {"location": "杭州"})

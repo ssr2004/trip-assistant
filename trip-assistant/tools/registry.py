@@ -78,6 +78,7 @@ class ToolRegistry:
         from tools.policy import PolicyTool
         from tools.guide import GuideTool
         from tools.itinerary import ItineraryTool
+        from tools.routes import RouteTool
 
         self.register(FlightTool())
         self.register(HotelTool())
@@ -85,6 +86,7 @@ class ToolRegistry:
         self.register(PolicyTool())
         self.register(GuideTool())
         self.register(ItineraryTool())
+        self.register(RouteTool())
 
     def register(self, tool: BaseTool):
         """

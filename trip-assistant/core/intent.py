@@ -165,6 +165,7 @@ class IntentParser:
         revision_keywords = [
             "安排到", "安排在", "放到", "放在", "换一个", "替换", "不要去", "不想去",
             "删掉", "删除", "移除", "重新安排", "调整一下", "排一下顺序", "排序",
+            "按距离", "按路线", "路线顺序", "优化路线", "优化一下", "优化",
         ]
         poi_keywords = ["西湖", "灵隐寺", "西溪", "宋城", "景点", "行程"]
         return any(keyword in text for keyword in revision_keywords) and any(keyword in text for keyword in poi_keywords)

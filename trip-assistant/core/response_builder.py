@@ -206,12 +206,28 @@ class ResponseBuilder:
         if itinerary:
             lines.extend(self._format_itinerary(itinerary, section_title="调整后的每日行程"))
 
+        route_summary = data.get("route_summary")
+        if route_summary:
+            lines.extend(self._format_route_summary(route_summary))
+
         sources = data.get("sources") or []
         if sources:
             lines.append("资料依据：")
             for source in sources[:3]:
                 lines.append(f"- {source}")
         return "\n".join(lines)
+
+    def _format_route_summary(self, route_summary: Dict) -> List[str]:
+        """格式化路线优化摘要"""
+        lines = ["", "路线优化摘要："]
+        for segment in (route_summary.get("segments") or [])[:5]:
+            distance_km = self._format_distance(segment.get("distance", 0))
+            duration_text = self._format_duration(segment.get("duration", 0))
+            lines.append(f"- {segment.get('from')} → {segment.get('to')}：约{distance_km}，约{duration_text}")
+        total_distance = self._format_distance(route_summary.get("total_distance", 0))
+        total_duration = self._format_duration(route_summary.get("total_duration", 0))
+        lines.append(f"- 总距离：约{total_distance}，预计用时约{total_duration}")
+        return lines
 
     def _format_single_tool_response(self, title: str, task_results: List[Dict], tool_name: str) -> str:
         """格式化单工具查询回复"""
@@ -492,6 +508,25 @@ class ResponseBuilder:
             return "时间待定"
         text = str(value)
         return text.replace("None ", "").strip() or "时间待定"
+
+    def _format_distance(self, distance: Any) -> str:
+        """格式化米制距离"""
+        try:
+            meters = float(distance)
+        except (TypeError, ValueError):
+            meters = 0
+        if meters >= 1000:
+            return f"{meters / 1000:.1f}公里"
+        return f"{meters:.0f}米"
+
+    def _format_duration(self, duration: Any) -> str:
+        """格式化秒制耗时"""
+        try:
+            seconds = int(duration)
+        except (TypeError, ValueError):
+            seconds = 0
+        minutes = max(round(seconds / 60), 1) if seconds else 0
+        return f"{minutes}分钟"
 
     def _compact_multiline(self, text: str, max_lines: int) -> str:
         """压缩多行文本，避免攻略段落过长"""

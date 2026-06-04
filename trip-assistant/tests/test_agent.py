@@ -96,6 +96,22 @@ async def test_agent_replaces_attraction_after_travel_plan(agent):
 
 
 @pytest.mark.asyncio
+async def test_agent_optimizes_itinerary_route_order(agent):
+    """Agent支持按距离优化某天景点顺序"""
+    session_id = "test-session-itinerary-route-optimize"
+
+    await agent.arun("我要从郑州去杭州玩三天，预算3000，6月10日出发", session_id)
+    response = await agent.arun("帮我按距离优化一下第二天行程", session_id)
+
+    assert "已根据您的要求调整行程" in response
+    assert "已按距离优化第2天景点顺序" in response
+    assert "路线优化摘要" in response
+    assert "灵隐寺" in response
+    assert "西溪国家湿地公园" in response
+    assert "总距离" in response
+
+
+@pytest.mark.asyncio
 async def test_agent_revise_itinerary_without_history(agent):
     """没有历史行程时行程调整给出合理提示"""
     response = await agent.arun("把西湖安排到第一天", "test-session-itinerary-revision-empty")

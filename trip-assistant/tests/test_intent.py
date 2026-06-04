@@ -73,6 +73,17 @@ def test_parse_itinerary_revision_replace_attraction():
 
 
 
+def test_parse_itinerary_revision_route_optimization():
+    """解析行程调整中的路线优化请求"""
+    parser = IntentParser()
+
+    result = parser.parse("帮我按距离优化一下第二天行程")
+
+    assert result["intent"] == "itinerary_revision"
+    assert result["missing_slots"] == []
+
+
+
 def test_parse_dynamic_knowledge_query_for_poi_detail():
     """解析外部动态知识景点详情追问"""
     parser = IntentParser()

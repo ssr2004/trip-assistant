@@ -215,6 +215,11 @@ def test_build_itinerary_revision_response():
                     "itinerary": [
                         {"day": 1, "title": "抵达杭州", "activities": ["抵达杭州", "西湖"], "notes": "轻松游览。"}
                     ],
+                    "route_summary": {
+                        "segments": [{"from": "西湖", "to": "灵隐寺", "distance": 6200, "duration": 1800}],
+                        "total_distance": 6200,
+                        "total_duration": 1800,
+                    },
                     "sources": ["上一轮旅行方案", "会话动态景点数据"],
                 },
                 "error": None,
@@ -226,6 +231,9 @@ def test_build_itinerary_revision_response():
     assert "调整后的每日行程" in response
     assert "Day 1" in response
     assert "西湖" in response
+    assert "路线优化摘要" in response
+    assert "西湖 → 灵隐寺" in response
+    assert "6.2公里" in response
     assert "资料依据" in response
 
 
