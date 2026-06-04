@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     EXTERNAL_API_TIMEOUT: int = 10
     EXTERNAL_API_RETRY_TIMES: int = 2
     EXTERNAL_API_MOCK_ENABLED: bool = True
+    EXTERNAL_API_CACHE_ENABLED: bool = True
+    EXTERNAL_API_CACHE_TTL: int = 3600
+    EXTERNAL_API_CACHE_BACKEND: str = "redis"
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     # API配置
     AMADEUS_API_KEY: str = ""

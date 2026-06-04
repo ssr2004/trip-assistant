@@ -35,6 +35,34 @@ class RAGDocumentAdapter:
             },
         }
 
+    def from_amap_poi(self, poi: Dict[str, Any]) -> Dict[str, Any]:
+        """将高德POI记录转换为景点RAG文档"""
+        biz_ext = poi.get("biz_ext") if isinstance(poi.get("biz_ext"), dict) else {}
+        record = {
+            "id": poi.get("id") or poi.get("uid") or poi.get("name"),
+            "name": poi.get("name"),
+            "type": poi.get("type"),
+            "address": poi.get("address") or poi.get("adname"),
+            "location": poi.get("location"),
+            "province": poi.get("pname"),
+            "city": poi.get("cityname"),
+            "district": poi.get("adname"),
+            "rating": biz_ext.get("rating"),
+        }
+        document = self.from_api_record(
+            record=record,
+            source_type="attraction",
+            provider="amap",
+            title_field="name",
+            content_fields=["name", "type", "address", "location", "province", "city", "district", "rating"],
+        )
+        document["metadata"].update({
+            "poi_type": str(poi.get("type") or ""),
+            "city": str(poi.get("cityname") or ""),
+            "district": str(poi.get("adname") or ""),
+        })
+        return document
+
     def _build_markdown_content(
         self,
         title: str,
@@ -58,6 +86,11 @@ class RAGDocumentAdapter:
             "description": "描述",
             "address": "地址",
             "category": "分类",
+            "type": "类型",
+            "location": "坐标",
+            "province": "省份",
+            "city": "城市",
+            "district": "行政区",
             "rating": "评分",
             "price": "价格",
         }

@@ -5,6 +5,7 @@
 from typing import Any, Callable, Dict, List, Optional
 
 from app.config import settings
+from core.cache import ExternalAPICache, create_external_api_cache
 from core.external_api import ExternalAPIClient
 
 
@@ -19,6 +20,7 @@ class AMapPOIClient:
         api_key: Optional[str] = None,
         request_func: Optional[Callable[..., Any]] = None,
         mock_enabled: Optional[bool] = None,
+        cache: Optional[ExternalAPICache] = None,
     ):
         """初始化高德POI客户端"""
         resolved_key = settings.AMAP_API_KEY if api_key is None else api_key
@@ -30,6 +32,7 @@ class AMapPOIClient:
             mock_enabled=mock_enabled,
             request_func=request_func,
         )
+        self.cache = cache or create_external_api_cache()
 
     def available(self) -> bool:
         """判断是否具备真实高德API调用条件"""
@@ -52,12 +55,52 @@ class AMapPOIClient:
             "page": page,
             "extensions": "base",
         }
-        return await self.client.request_json(
+        cache_params = self._cache_params(params)
+        cached_result, cache_metadata = await self.cache.get("amap", "poi", cache_params)
+        if cached_result:
+            return self._with_cache_metadata(cached_result, cache_metadata)
+
+        result = await self.client.request_json(
             method="GET",
             url=self.SEARCH_URL,
             params=params,
             mock_data=self._mock_poi_response(city),
         )
+        if result.get("success"):
+            write_metadata = await self.cache.set(
+                provider="amap",
+                resource="poi",
+                params=cache_params,
+                value=self._without_cache_metadata(result),
+            )
+            cache_metadata.update(write_metadata)
+        else:
+            cache_metadata["cache_write"] = False
+        cache_metadata["cache_hit"] = False
+        return self._with_cache_metadata(result, cache_metadata)
+
+    def _cache_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """构建不含敏感Key的缓存参数"""
+        return {key: value for key, value in params.items() if key != "key"}
+
+    def _with_cache_metadata(self, result: Dict[str, Any], cache_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """将缓存元数据合并到外部API响应中"""
+        merged = dict(result)
+        metadata = dict(result.get("metadata", {}) or {})
+        metadata.update(cache_metadata)
+        merged["metadata"] = metadata
+        return merged
+
+    def _without_cache_metadata(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """构建可缓存响应，避免缓存命中信息被持久化"""
+        cached = dict(result)
+        metadata = {
+            key: value
+            for key, value in (result.get("metadata", {}) or {}).items()
+            if not key.startswith("cache_")
+        }
+        cached["metadata"] = metadata
+        return cached
 
     def _mock_poi_response(self, city: str) -> Dict[str, Any]:
         """构建高德POI mock响应"""
