@@ -37,11 +37,14 @@ def test_frontend_calls_chat_and_external_status_apis():
 
     assert 'fetch("/api/chat"' in api_ts
     assert 'fetch("/api/external/status")' in api_ts
+    assert 'fetch("/api/llm/status")' in api_ts
     assert "Promise<ChatResponse>" in api_ts
     assert "Promise<ExternalStatusResponse>" in api_ts
+    assert "Promise<LLMStatusResponse>" in api_ts
     assert "travelMindSessionId" in app_vue
     assert "newSession" in app_vue
     assert "data.artifacts" in app_vue
+    assert "llmStatus" in app_vue
 
 
 def test_frontend_components_are_split_by_responsibility():
@@ -69,6 +72,7 @@ def test_frontend_has_typescript_contract_boundary():
     assert "export interface ChatArtifacts" in types_ts
     assert "export interface ChatResponse" in types_ts
     assert "export interface ExecutionTrace" in types_ts
+    assert "export interface LLMStatusResponse" in types_ts
     assert "duration_ms" in types_ts
     assert "execution_mode" in types_ts
     assert "error_type" in types_ts
@@ -124,6 +128,18 @@ def test_frontend_has_resume_demo_script_shortcuts():
         assert text in status_panel
 
 
+def test_frontend_renders_llm_status_panel():
+    """前端演示面板展示LLM运行状态"""
+    status_panel = (FRONTEND_DIR / "src" / "components" / "StatusPanel.vue").read_text(encoding="utf-8")
+
+    assert "LLM Runtime" in status_panel
+    assert "模型能力状态" in status_panel
+    assert "real_llm" in status_panel
+    assert "rule_fallback" in status_panel
+    assert "OpenAI-compatible" in status_panel
+    assert "llmStatus.model" in status_panel
+
+
 def test_frontend_has_playwright_demo_acceptance():
     """前端包含浏览器级演示验收配置和用例"""
     playwright_config = (FRONTEND_DIR / "playwright.config.ts").read_text(encoding="utf-8")
@@ -134,6 +150,7 @@ def test_frontend_has_playwright_demo_acceptance():
     assert "chromium-desktop" in playwright_config
     assert "chromium-mobile" in playwright_config
     assert "**/api/external/status" in demo_spec
+    assert "**/api/llm/status" in demo_spec
     assert "**/api/chat" in demo_spec
     assert "runs the resume demo script with artifacts and trace" in demo_spec
     assert "keeps the demo controls usable on mobile viewport" in demo_spec

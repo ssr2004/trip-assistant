@@ -17,3 +17,6 @@ def test_settings_defaults_are_project_aligned():
     assert settings.APP_NAME == "TravelMind"
     assert settings.APP_ENV == "development"
     assert settings.DATABASE_URL == "sqlite:///./data/travelmind.db"
+    assert settings.LLM_PROVIDER == "deepseek"
+    assert settings.LLM_MODEL == "deepseek-v4-flash"
+    assert settings.LLM_BASE_URL == "https://api.deepseek.com"

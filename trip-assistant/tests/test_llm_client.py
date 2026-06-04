@@ -152,11 +152,11 @@ async def test_llm_client_sanitizes_api_key_from_errors():
 
 def test_default_llm_settings_are_deepseek_compatible():
     """默认LLM配置面向DeepSeek OpenAI-compatible接口"""
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.LLM_PROVIDER == "deepseek"
-    assert settings.LLM_MODEL == "deepseek-chat"
-    assert settings.LLM_BASE_URL == "https://api.deepseek.com/v1"
+    assert settings.LLM_MODEL == "deepseek-v4-flash"
+    assert settings.LLM_BASE_URL == "https://api.deepseek.com"
 
 
 def test_prompt_templates_are_ready_for_future_fallbacks():

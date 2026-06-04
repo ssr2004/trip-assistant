@@ -51,6 +51,18 @@ class ExternalStatusResponse(BaseModel):
     summary: dict[str, int | bool]
 
 
+class LLMStatusResponse(BaseModel):
+    """LLM运行状态响应，不暴露真实密钥"""
+    provider: str
+    model: str
+    base_url: str
+    api_key_configured: bool
+    key_source: str | None = None
+    mode: str
+    fallback_enabled: bool = True
+    openai_compatible: bool = True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -151,6 +163,20 @@ async def external_status():
             "unavailable_count": unavailable_count,
             "all_operational": unavailable_count == 0,
         },
+    )
+
+
+@app.get("/api/llm/status", response_model=LLMStatusResponse)
+async def llm_status():
+    """查看LLM配置状态，不暴露真实密钥"""
+    configured = bool(settings.LLM_API_KEY and settings.LLM_BASE_URL)
+    return LLMStatusResponse(
+        provider=settings.LLM_PROVIDER,
+        model=settings.LLM_MODEL,
+        base_url=settings.LLM_BASE_URL,
+        api_key_configured=configured,
+        key_source="LLM_API_KEY" if settings.LLM_API_KEY else None,
+        mode="real_llm" if configured else "rule_fallback",
     )
 
 

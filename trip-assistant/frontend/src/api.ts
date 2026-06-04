@@ -1,4 +1,4 @@
-import type { ChatResponse, ExternalStatusResponse } from "./types";
+import type { ChatResponse, ExternalStatusResponse, LLMStatusResponse } from "./types";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -25,6 +25,15 @@ export async function fetchExternalStatus(): Promise<ExternalStatusResponse> {
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.detail || data.error || "外部 API 状态获取失败");
+  }
+  return data;
+}
+
+export async function fetchLLMStatus(): Promise<LLMStatusResponse> {
+  const response = await fetch("/api/llm/status");
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || data.error || "LLM 状态获取失败");
   }
   return data;
 }

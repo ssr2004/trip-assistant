@@ -17,6 +17,9 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "多智能体旅行规划系统" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "模型能力状态" })).toBeVisible();
+  await expect(page.getByText("真实 LLM")).toBeVisible();
+  await expect(page.getByText("deepseek / deepseek-v4-flash")).toBeVisible();
   await expect(page.getByRole("heading", { name: "外部能力状态" })).toBeVisible();
   await expect(page.getByText("3 真实")).toBeVisible();
   await expect(page.getByText("AMAP_API_KEY")).toHaveCount(3);
@@ -76,6 +79,22 @@ async function mockBackend(page: Page) {
           unavailable_count: 0,
           all_operational: true,
         },
+      }),
+    });
+  });
+
+  await page.route("**/api/llm/status", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        base_url: "https://api.deepseek.com",
+        api_key_configured: true,
+        key_source: "LLM_API_KEY",
+        mode: "real_llm",
+        fallback_enabled: true,
+        openai_compatible: true,
       }),
     });
   });

@@ -22,9 +22,9 @@ class Settings(BaseSettings):
 
     # LLM配置
     LLM_PROVIDER: str = "deepseek"  # deepseek, glm, qwen, openai
-    LLM_MODEL: str = "deepseek-chat"
+    LLM_MODEL: str = "deepseek-v4-flash"
     LLM_API_KEY: str = ""
-    LLM_BASE_URL: str = "https://api.deepseek.com/v1"
+    LLM_BASE_URL: str = "https://api.deepseek.com"
     LLM_TEMPERATURE: float = 0.7
 
     # Embedding配置

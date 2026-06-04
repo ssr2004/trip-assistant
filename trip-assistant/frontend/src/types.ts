@@ -168,3 +168,14 @@ export interface ExternalStatusResponse {
   services: ExternalServiceStatus[];
   summary: ExternalStatusSummary;
 }
+
+export interface LLMStatusResponse {
+  provider: string;
+  model: string;
+  base_url: string;
+  api_key_configured: boolean;
+  key_source?: string | null;
+  mode: "real_llm" | "rule_fallback" | string;
+  fallback_enabled: boolean;
+  openai_compatible: boolean;
+}

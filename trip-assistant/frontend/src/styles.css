@@ -587,12 +587,24 @@ button:disabled {
   border-left-color: #16835f;
 }
 
+.service-item.real_llm {
+  border-left-color: #16835f;
+}
+
 .service-item.mock_fallback {
+  border-left-color: #c27a13;
+}
+
+.service-item.rule_fallback {
   border-left-color: #c27a13;
 }
 
 .service-item.unavailable {
   border-left-color: #bd3c3c;
+}
+
+.llm-service {
+  margin: 14px 16px 16px;
 }
 
 .quick-grid {

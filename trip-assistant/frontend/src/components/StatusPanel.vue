@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Component } from "vue";
 import {
+  BrainCircuit,
   CloudSun,
   MapPinned,
   Navigation,
@@ -10,11 +11,12 @@ import {
   Sparkles,
   Umbrella,
 } from "@lucide/vue";
-import type { ExternalStatusResponse, ExternalStatusSummary } from "../types";
+import type { ExternalStatusResponse, ExternalStatusSummary, LLMStatusResponse } from "../types";
 
 withDefaults(
   defineProps<{
     externalStatus: ExternalStatusResponse | null;
+    llmStatus: LLMStatusResponse | null;
     statusSummary: ExternalStatusSummary;
     statusLoading?: boolean;
     statusError?: string;
@@ -24,6 +26,7 @@ withDefaults(
   }>(),
   {
     externalStatus: null,
+    llmStatus: null,
     statusLoading: false,
     statusError: "",
     loading: false,
@@ -68,6 +71,8 @@ function modeLabel(mode: string) {
     real_api: "真实 API",
     mock_fallback: "Mock 降级",
     unavailable: "不可用",
+    real_llm: "真实 LLM",
+    rule_fallback: "规则降级",
   };
   return labels[mode] || mode;
 }
@@ -102,6 +107,27 @@ function capabilityLabel(capability: string) {
           <dd>{{ shortSessionId }}</dd>
         </div>
       </dl>
+    </section>
+
+    <section class="status-section">
+      <div class="panel-header compact">
+        <div>
+          <p class="eyebrow">LLM Runtime</p>
+          <h2>模型能力状态</h2>
+        </div>
+        <BrainCircuit :size="20" />
+      </div>
+
+      <article v-if="llmStatus" class="service-item llm-service" :class="llmStatus.mode">
+        <div>
+          <strong>{{ modeLabel(llmStatus.mode) }}</strong>
+          <span>{{ llmStatus.provider }} / {{ llmStatus.model }}</span>
+          <span>{{ llmStatus.key_source || "无 Key，使用规则 fallback" }}</span>
+        </div>
+        <b>{{ llmStatus.openai_compatible ? "OpenAI-compatible" : "Custom" }}</b>
+      </article>
+      <p v-else-if="statusLoading" class="status-muted">正在读取 LLM 状态...</p>
+      <p v-else class="status-muted">LLM 状态待刷新。</p>
     </section>
 
     <section class="status-section">

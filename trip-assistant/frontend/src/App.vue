@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import { Plus, RefreshCw } from "@lucide/vue";
-import { fetchExternalStatus, sendChatMessage } from "./api";
+import { fetchExternalStatus, fetchLLMStatus, sendChatMessage } from "./api";
 import ChatPanel from "./components/ChatPanel.vue";
 import StatusPanel from "./components/StatusPanel.vue";
-import type { ChatArtifacts, ChatMessage, ExecutionTrace, ExternalStatusResponse, MessageRole } from "./types";
+import type { ChatArtifacts, ChatMessage, ExecutionTrace, ExternalStatusResponse, LLMStatusResponse, MessageRole } from "./types";
 
 const SESSION_STORAGE_KEY = "travelMindSessionId";
 
@@ -14,6 +14,7 @@ const loading = ref(false);
 const statusLoading = ref(false);
 const statusError = ref("");
 const externalStatus = ref<ExternalStatusResponse | null>(null);
+const llmStatus = ref<LLMStatusResponse | null>(null);
 const chatPanel = ref<{ scrollToBottom: () => void } | null>(null);
 const messages = ref<ChatMessage[]>([
   {
@@ -74,9 +75,14 @@ async function refreshExternalStatus() {
   statusLoading.value = true;
   statusError.value = "";
   try {
-    externalStatus.value = await fetchExternalStatus();
+    const [externalData, llmData] = await Promise.all([
+      fetchExternalStatus(),
+      fetchLLMStatus(),
+    ]);
+    externalStatus.value = externalData;
+    llmStatus.value = llmData;
   } catch (error) {
-    statusError.value = error.message || "外部 API 状态获取失败";
+    statusError.value = error.message || "系统状态获取失败";
   } finally {
     statusLoading.value = false;
   }
@@ -159,6 +165,7 @@ onMounted(() => {
 
       <StatusPanel
         :external-status="externalStatus"
+        :llm-status="llmStatus"
         :status-summary="statusSummary"
         :status-loading="statusLoading"
         :status-error="statusError"
