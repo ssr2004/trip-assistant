@@ -70,6 +70,7 @@ function summaryNumber(value: unknown): number {
     </div>
 
     <div class="runtime-summary" aria-label="Runtime Metrics">
+      <span>Planner {{ trace.summary.planner_mode || "template" }}</span>
       <span>LLM {{ summaryNumber(trace.summary.llm_call_count) }} calls</span>
       <span>{{ summaryNumber(trace.summary.llm_duration_ms) }}ms LLM</span>
       <span>{{ summaryNumber(trace.summary.llm_total_tokens) }} tokens</span>

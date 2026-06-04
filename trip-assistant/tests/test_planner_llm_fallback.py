@@ -61,6 +61,10 @@ async def test_plan_async_defaults_to_template_without_llm_enabled():
     assert len(tasks) == 5
     assert tasks[-1]["tool"] == "generate_itinerary"
     assert llm_client.calls == 0
+    assert planner.last_plan_metadata["planner_mode"] == "template"
+    assert planner.last_plan_metadata["llm_planner_enabled"] is False
+    assert planner.last_plan_metadata["llm_planner_attempted"] is False
+    assert planner.last_plan_metadata["skip_reason"] == "disabled"
 
 
 @pytest.mark.asyncio
@@ -118,6 +122,10 @@ async def test_plan_async_uses_valid_llm_plan_for_complex_request():
     assert tasks[1]["tool"] == "generate_itinerary"
     assert llm_client.calls == 1
     assert llm_client.last_request.response_format == "json_object"
+    assert planner.last_plan_metadata["planner_mode"] == "llm"
+    assert planner.last_plan_metadata["llm_planner_attempted"] is True
+    assert planner.last_plan_metadata["llm_planner_adopted"] is True
+    assert planner.last_plan_metadata["llm_task_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -197,6 +205,10 @@ async def test_plan_async_falls_back_when_llm_uses_unknown_tool():
     assert len(tasks) == 5
     assert "search_weather" not in [task.get("tool") for task in tasks]
     assert llm_client.calls == 1
+    assert planner.last_plan_metadata["planner_mode"] == "template"
+    assert planner.last_plan_metadata["llm_planner_attempted"] is True
+    assert planner.last_plan_metadata["llm_planner_adopted"] is False
+    assert planner.last_plan_metadata["fallback_reason"] == "unsafe_plan"
 
 
 @pytest.mark.asyncio

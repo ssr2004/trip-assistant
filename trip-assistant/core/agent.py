@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
+from app.config import get_settings
 from core.state import AgentState
 from core.planner import TaskPlanner
 from core.memory.manager import MemoryManager
@@ -28,8 +29,9 @@ class TravelAgent:
 
     def __init__(self):
         """初始化Agent"""
+        self.settings = get_settings()
         self.intent_parser = IntentParser()
-        self.task_planner = TaskPlanner()
+        self.task_planner = TaskPlanner(llm_planner_enabled=self.settings.LLM_PLANNER_ENABLED)
         self.memory_manager = MemoryManager()
         self.rag_retriever = RAGRetriever()
         self.dynamic_rag_store = DynamicRAGStore()
@@ -97,7 +99,7 @@ class TravelAgent:
         }
 
         tasks = await self.task_planner.plan_async(intent, context)
-        return {"tasks": tasks}
+        return {"tasks": tasks, "planner_metadata": self.task_planner.last_plan_metadata}
 
     async def _execute_tasks(self, state: AgentState) -> Dict:
         """执行任务并记录轻量执行元信息。"""
@@ -1003,6 +1005,7 @@ class TravelAgent:
         task_results = state.get("task_results", []) or []
         rag_context = state.get("rag_context", []) or []
         dynamic_rag_context = state.get("dynamic_rag_context", {}) or {}
+        planner_metadata = state.get("planner_metadata", {}) if isinstance(state.get("planner_metadata"), dict) else {}
 
         steps: List[Dict[str, Any]] = []
         intent_type = intent.get("intent") or "general_chat"
@@ -1034,7 +1037,8 @@ class TravelAgent:
             "stage": "planning",
             "label": "Task plan",
             "status": "success",
-            "detail": f"tasks={len(tasks)}",
+            "detail": self._build_planning_detail(tasks, planner_metadata),
+            "execution_mode": planner_metadata.get("planner_mode") or "template",
         })
 
         for task_result in task_results:
@@ -1079,6 +1083,14 @@ class TravelAgent:
             "llm_model": self.intent_parser.llm_client.settings.LLM_MODEL,
             "json_repair_attempted": bool(intent_metadata.get("json_repair_attempted")),
             "json_repair_success": bool(intent_metadata.get("json_repair_success")),
+            "planner_mode": planner_metadata.get("planner_mode") or "template",
+            "llm_planner_enabled": bool(planner_metadata.get("llm_planner_enabled")),
+            "llm_planner_available": bool(planner_metadata.get("llm_planner_available")),
+            "llm_planner_attempted": bool(planner_metadata.get("llm_planner_attempted")),
+            "llm_planner_adopted": bool(planner_metadata.get("llm_planner_adopted")),
+            "llm_planner_fallback_reason": planner_metadata.get("fallback_reason") or planner_metadata.get("skip_reason") or "",
+            "llm_planner_duration_ms": int(planner_metadata.get("llm_planner_duration_ms") or 0),
+            "llm_planner_total_tokens": int(planner_metadata.get("llm_planner_total_tokens") or 0),
             "task_count": len(tasks),
             "tool_count": sum(1 for task in tasks if task.get("tool")),
             "failed_count": sum(1 for result in task_results if not result.get("success")),
@@ -1090,6 +1102,15 @@ class TravelAgent:
             **runtime_metrics,
         }
         return normalize_execution_trace({"steps": steps, "summary": summary})
+
+    def _build_planning_detail(self, tasks: List[Dict[str, Any]], planner_metadata: Dict[str, Any]) -> str:
+        """Build a compact planning trace detail."""
+        planner_mode = planner_metadata.get("planner_mode") or "template"
+        detail = f"tasks={len(tasks)}, planner={planner_mode}"
+        fallback_reason = planner_metadata.get("fallback_reason") or planner_metadata.get("skip_reason")
+        if fallback_reason:
+            detail = f"{detail}, reason={fallback_reason}"
+        return detail
 
     def _build_runtime_metrics(self, intent_metadata: Dict[str, Any], task_results: List[Dict]) -> Dict[str, Any]:
         """Aggregate sanitized runtime counters for the trace summary."""

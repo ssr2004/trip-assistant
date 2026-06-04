@@ -126,6 +126,14 @@ export interface ExecutionTrace {
     failed_count?: number;
     source_count?: number;
     total_duration_ms?: number;
+    planner_mode?: string;
+    llm_planner_enabled?: boolean;
+    llm_planner_available?: boolean;
+    llm_planner_attempted?: boolean;
+    llm_planner_adopted?: boolean;
+    llm_planner_fallback_reason?: string;
+    llm_planner_duration_ms?: number;
+    llm_planner_total_tokens?: number;
     llm_call_count?: number;
     llm_success_count?: number;
     llm_failure_count?: number;

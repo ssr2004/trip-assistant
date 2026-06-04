@@ -30,6 +30,7 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
   await expect(page.getByText("每日行程").first()).toBeVisible();
   await expect(page.getByText("景点推荐").first()).toBeVisible();
   await expect(page.getByText("Execution Trace").first()).toBeVisible();
+  await expect(page.getByText("Planner llm").first()).toBeVisible();
   await expect(page.getByText("LLM 2 calls").first()).toBeVisible();
   await expect(page.getByText("1 repairs").first()).toBeVisible();
   await expect(page.getByText("1 real API").first()).toBeVisible();
@@ -236,6 +237,14 @@ function trace(intent: string, taskSteps: Array<Record<string, unknown>>) {
     steps,
     summary: {
       intent,
+      planner_mode: hasRepair ? "llm" : "template",
+      llm_planner_enabled: hasRepair,
+      llm_planner_available: true,
+      llm_planner_attempted: hasRepair,
+      llm_planner_adopted: hasRepair,
+      llm_planner_fallback_reason: "",
+      llm_planner_duration_ms: hasRepair ? 88 : 0,
+      llm_planner_total_tokens: hasRepair ? 321 : 0,
       task_count: taskSteps.length,
       tool_count: taskSteps.filter((step) => step.stage === "tool").length,
       failed_count: 0,

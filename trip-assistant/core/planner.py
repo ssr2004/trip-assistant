@@ -35,6 +35,7 @@ class TaskPlanner:
         """
         self.llm_client = llm_client or LLMClient()
         self.llm_planner_enabled = llm_planner_enabled
+        self.last_plan_metadata: Dict = self._base_plan_metadata()
 
     def plan(self, intent: Dict, context: Dict) -> List[Dict]:
         """
@@ -48,9 +49,18 @@ class TaskPlanner:
             任务列表
         """
         if not intent:
+            self.last_plan_metadata = {**self._base_plan_metadata(), "planner_mode": "template", "skip_reason": "empty_intent"}
             return []
 
         plan = self._template_plan(intent, context)
+        self.last_plan_metadata = {
+            **self._base_plan_metadata(),
+            "planner_mode": "template",
+            "llm_planner_attempted": False,
+            "llm_planner_adopted": False,
+            "skip_reason": "sync_template_plan",
+            "template_task_count": len(plan.tasks),
+        }
         return [task.model_dump() for task in plan.tasks]
 
     async def plan_async(self, intent: Dict, context: Dict) -> List[Dict]:
@@ -65,15 +75,38 @@ class TaskPlanner:
             任务列表
         """
         if not intent:
+            self.last_plan_metadata = {**self._base_plan_metadata(), "planner_mode": "template", "skip_reason": "empty_intent"}
             return []
 
         template_plan = self._template_plan(intent, context)
-        if not self._should_use_llm_plan(intent, context, template_plan):
+        skip_reason = self._llm_plan_skip_reason(intent, context, template_plan)
+        if skip_reason:
+            self.last_plan_metadata = {
+                **self._base_plan_metadata(),
+                "planner_mode": "template",
+                "llm_planner_attempted": False,
+                "llm_planner_adopted": False,
+                "skip_reason": skip_reason,
+                "template_task_count": len(template_plan.tasks),
+            }
             return [task.model_dump() for task in template_plan.tasks]
 
         llm_plan = await self._llm_plan(intent, context, template_plan)
         if llm_plan:
+            self.last_plan_metadata = {
+                **self.last_plan_metadata,
+                "planner_mode": "llm",
+                "llm_planner_adopted": True,
+                "llm_task_count": len(llm_plan.tasks),
+                "template_task_count": len(template_plan.tasks),
+            }
             return [task.model_dump() for task in llm_plan.tasks]
+        self.last_plan_metadata = {
+            **self.last_plan_metadata,
+            "planner_mode": "template",
+            "llm_planner_adopted": False,
+            "template_task_count": len(template_plan.tasks),
+        }
         return [task.model_dump() for task in template_plan.tasks]
 
     def _template_plan(self, intent: Dict, context: Dict) -> TaskPlan:
@@ -438,27 +471,48 @@ class TaskPlanner:
 
     def _should_use_llm_plan(self, intent: Dict, context: Dict, template_plan: TaskPlan) -> bool:
         """判断是否尝试LLM规划"""
-        if not self.llm_planner_enabled or not self.llm_client.available:
-            return False
+        return self._llm_plan_skip_reason(intent, context, template_plan) is None
 
+    def _llm_plan_skip_reason(self, intent: Dict, context: Dict, template_plan: TaskPlan) -> Optional[str]:
+        """Return why LLM planning should be skipped, or None when it should run."""
+        if not self.llm_planner_enabled:
+            return "disabled"
+        if not self.llm_client.available:
+            return "llm_unavailable"
         if template_plan.need_user_input:
-            return False
+            return "need_user_input"
 
         query = context.get("query", "") or ""
         entities = intent.get("entities", {}) or {}
         preferences = entities.get("preferences", []) or []
         confidence = intent.get("confidence", 1.0)
         complex_keywords = ["顺便", "同时", "不要太累", "别太累", "如果可以", "帮我权衡", "兼顾", "路线", "天气"]
-
-        return (
+        should_run = (
             len(query) >= 40
             or any(keyword in query for keyword in complex_keywords)
             or len(preferences) >= 3
             or confidence < 0.65
         )
+        return None if should_run else "not_complex_enough"
+
+    def _base_plan_metadata(self) -> Dict:
+        """Build default sanitized planner metadata for trace observability."""
+        return {
+            "planner_mode": "template",
+            "llm_planner_enabled": bool(self.llm_planner_enabled),
+            "llm_planner_available": bool(self.llm_client.available),
+            "llm_planner_attempted": False,
+            "llm_planner_adopted": False,
+        }
 
     async def _llm_plan(self, intent: Dict, context: Dict, template_plan: TaskPlan) -> Optional[TaskPlan]:
         """调用LLM生成任务计划，失败时返回None"""
+        self.last_plan_metadata = {
+            **self._base_plan_metadata(),
+            "planner_mode": "template",
+            "llm_planner_attempted": True,
+            "llm_planner_adopted": False,
+        }
         request = LLMRequest(
             messages=[
                 LLMMessage(role="system", content=PLANNER_FALLBACK_SYSTEM_PROMPT),
@@ -476,19 +530,50 @@ class TaskPlanner:
             metadata={"fallback_for": "task_plan"},
         )
         response = await self.llm_client.chat(request)
+        self.last_plan_metadata = {
+            **self.last_plan_metadata,
+            "llm_planner_model": response.metadata.get("model"),
+            "llm_planner_error_type": response.metadata.get("error_type"),
+            "llm_planner_duration_ms": int(response.metadata.get("duration_ms") or 0),
+            "llm_planner_prompt_tokens": int(response.metadata.get("prompt_tokens") or 0),
+            "llm_planner_completion_tokens": int(response.metadata.get("completion_tokens") or 0),
+            "llm_planner_total_tokens": int(response.metadata.get("total_tokens") or 0),
+        }
         if not response.success:
+            self.last_plan_metadata = {
+                **self.last_plan_metadata,
+                "fallback_reason": "llm_call_failed",
+            }
             return None
 
         parsed_json = parse_llm_json_object(response.content)
         if not parsed_json:
+            self.last_plan_metadata = {
+                **self.last_plan_metadata,
+                "fallback_reason": "json_parse_failed",
+            }
             return None
 
         try:
             plan = TaskPlan.model_validate(parsed_json)
         except Exception:
+            self.last_plan_metadata = {
+                **self.last_plan_metadata,
+                "fallback_reason": "schema_validation_failed",
+            }
             return None
 
-        return plan if self._validate_llm_plan(plan) else None
+        if not self._validate_llm_plan(plan):
+            self.last_plan_metadata = {
+                **self.last_plan_metadata,
+                "fallback_reason": "unsafe_plan",
+            }
+            return None
+        self.last_plan_metadata = {
+            **self.last_plan_metadata,
+            "fallback_reason": None,
+        }
+        return plan
 
     def _validate_llm_plan(self, plan: TaskPlan) -> bool:
         """校验LLM规划结果是否安全可执行"""

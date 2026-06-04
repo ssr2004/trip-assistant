@@ -22,6 +22,8 @@ class AgentState(TypedDict):
     # 任务执行结果
     task_results: List[Dict]
 
+    planner_metadata: NotRequired[Dict]
+
     # RAG检索上下文
     rag_context: List[Dict]
 

@@ -147,3 +147,33 @@ def test_execution_trace_aggregates_runtime_tool_modes():
     assert trace["summary"]["real_api_count"] == 1
     assert trace["summary"]["mock_fallback_count"] == 1
     assert trace["summary"]["template_task_count"] == 1
+
+
+def test_execution_trace_includes_llm_planner_metadata():
+    agent = TravelAgent()
+
+    trace = agent._build_execution_trace({
+        "intent": {"intent": "travel_plan", "metadata": {"source": "rule"}},
+        "tasks": [{"task_type": "tool_call", "tool": "search_attractions"}],
+        "task_results": [],
+        "rag_context": [],
+        "planner_metadata": {
+            "planner_mode": "llm",
+            "llm_planner_enabled": True,
+            "llm_planner_available": True,
+            "llm_planner_attempted": True,
+            "llm_planner_adopted": True,
+            "llm_planner_duration_ms": 123,
+            "llm_planner_total_tokens": 456,
+        },
+    })
+
+    planning_step = next(step for step in trace["steps"] if step["stage"] == "planning")
+    assert planning_step["execution_mode"] == "llm"
+    assert "planner=llm" in planning_step["detail"]
+    assert trace["summary"]["planner_mode"] == "llm"
+    assert trace["summary"]["llm_planner_enabled"] is True
+    assert trace["summary"]["llm_planner_attempted"] is True
+    assert trace["summary"]["llm_planner_adopted"] is True
+    assert trace["summary"]["llm_planner_duration_ms"] == 123
+    assert trace["summary"]["llm_planner_total_tokens"] == 456

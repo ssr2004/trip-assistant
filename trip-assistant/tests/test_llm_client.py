@@ -211,6 +211,7 @@ def test_default_llm_settings_are_deepseek_compatible():
     assert settings.LLM_PROVIDER == "deepseek"
     assert settings.LLM_MODEL == "deepseek-v4-flash"
     assert settings.LLM_BASE_URL == "https://api.deepseek.com"
+    assert settings.LLM_PLANNER_ENABLED is False
 
 
 def test_prompt_templates_are_ready_for_future_fallbacks():
