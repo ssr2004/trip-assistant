@@ -50,6 +50,7 @@ def test_frontend_components_are_split_by_responsibility():
     assert (components_dir / "ChatPanel.vue").exists()
     assert (components_dir / "StatusPanel.vue").exists()
     assert (components_dir / "ArtifactCards.vue").exists()
+    assert (components_dir / "ExecutionTraceTimeline.vue").exists()
     assert "import ChatPanel" in app_vue
     assert "import StatusPanel" in app_vue
     assert "<ChatPanel" in app_vue
@@ -65,6 +66,8 @@ def test_frontend_has_typescript_contract_boundary():
     assert '"strict": true' in tsconfig
     assert "export interface ChatArtifacts" in types_ts
     assert "export interface ChatResponse" in types_ts
+    assert "export interface ExecutionTrace" in types_ts
+    assert "execution_trace" in types_ts
     assert "export interface ExternalStatusResponse" in types_ts
     assert '<script setup lang="ts">' in app_vue
 
@@ -80,12 +83,26 @@ def test_frontend_renders_structured_artifacts():
     assert "artifacts.attractions" in artifact_vue
 
 
+def test_frontend_renders_execution_trace_timeline():
+    """前端包含Agent执行过程时间线展示"""
+    chat_panel = (FRONTEND_DIR / "src" / "components" / "ChatPanel.vue").read_text(encoding="utf-8")
+    trace_vue = (FRONTEND_DIR / "src" / "components" / "ExecutionTraceTimeline.vue").read_text(encoding="utf-8")
+    app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+
+    assert "ExecutionTraceTimeline" in chat_panel
+    assert "message.execution_trace" in chat_panel
+    assert "Execution Trace" in trace_vue
+    assert "trace.summary.task_count" in trace_vue
+    assert "data.execution_trace" in app_vue
+
+
 def test_frontend_avoids_raw_html_rendering():
     """前端不使用原始HTML渲染Agent回复"""
     source_files = [
         FRONTEND_DIR / "src" / "App.vue",
         FRONTEND_DIR / "src" / "components" / "ChatPanel.vue",
         FRONTEND_DIR / "src" / "components" / "ArtifactCards.vue",
+        FRONTEND_DIR / "src" / "components" / "ExecutionTraceTimeline.vue",
         FRONTEND_DIR / "src" / "components" / "StatusPanel.vue",
     ]
     combined = "\n".join(path.read_text(encoding="utf-8") for path in source_files)

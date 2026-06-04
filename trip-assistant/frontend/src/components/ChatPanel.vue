@@ -2,6 +2,7 @@
 import { nextTick, ref } from "vue";
 import { MessageCircle, Send } from "@lucide/vue";
 import ArtifactCards from "./ArtifactCards.vue";
+import ExecutionTraceTimeline from "./ExecutionTraceTimeline.vue";
 import type { ChatMessage } from "../types";
 
 withDefaults(
@@ -36,6 +37,10 @@ function hasArtifacts(message: ChatMessage) {
   return message.role === "assistant" && message.artifacts && Object.keys(message.artifacts).length > 0;
 }
 
+function hasTrace(message: ChatMessage) {
+  return message.role === "assistant" && Boolean(message.execution_trace?.steps?.length);
+}
+
 function scrollToBottom() {
   nextTick(() => {
     if (messagesPanel.value) {
@@ -66,6 +71,7 @@ defineExpose({ scrollToBottom });
           <div class="message-bubble">
             {{ message.content }}
           </div>
+          <ExecutionTraceTimeline v-if="hasTrace(message)" :trace="message.execution_trace" />
           <ArtifactCards v-if="hasArtifacts(message)" :artifacts="message.artifacts" />
         </div>
       </article>

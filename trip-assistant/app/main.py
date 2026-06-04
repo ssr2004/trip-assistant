@@ -12,6 +12,7 @@ import uuid
 from app.config import settings
 from core.agent import TravelAgent
 from core.artifacts import ChatArtifacts
+from core.trace import ExecutionTrace
 
 
 # 全局Agent实例
@@ -29,6 +30,7 @@ class ChatResponse(BaseModel):
     session_id: str
     response: str
     artifacts: ChatArtifacts = Field(default_factory=ChatArtifacts)
+    execution_trace: ExecutionTrace = Field(default_factory=ExecutionTrace)
 
 
 class ExternalServiceStatus(BaseModel):
@@ -102,11 +104,13 @@ async def chat(request: ChatRequest):
         result = await agent.arun_with_artifacts(message, session_id)
         response = result.get("response", "处理完成")
         artifacts = result.get("artifacts", {})
+        execution_trace = result.get("execution_trace", {})
     else:
         response = await agent.arun(message, session_id)
         artifacts = {}
+        execution_trace = {}
 
-    return ChatResponse(session_id=session_id, response=response, artifacts=artifacts)
+    return ChatResponse(session_id=session_id, response=response, artifacts=artifacts, execution_trace=execution_trace)
 
 
 @app.get("/api/external/status", response_model=ExternalStatusResponse)

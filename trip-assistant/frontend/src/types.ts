@@ -103,17 +103,41 @@ export interface ChatArtifacts {
   attractions?: AttractionsArtifact | null;
 }
 
+export interface TraceStep {
+  stage: "intent" | "context" | "planning" | "tool" | "task" | "rag" | string;
+  label: string;
+  status: "success" | "failed" | string;
+  detail?: string | null;
+  task_type?: string | null;
+  tool?: string | null;
+  source_count?: number | null;
+}
+
+export interface ExecutionTrace {
+  steps: TraceStep[];
+  summary: {
+    intent?: string;
+    task_count?: number;
+    tool_count?: number;
+    failed_count?: number;
+    source_count?: number;
+    [key: string]: number | string | boolean | undefined;
+  };
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
   content: string;
   artifacts: ChatArtifacts;
+  execution_trace: ExecutionTrace;
 }
 
 export interface ChatResponse {
   session_id: string;
   response: string;
   artifacts?: ChatArtifacts | null;
+  execution_trace?: ExecutionTrace | null;
 }
 
 export interface ExternalServiceStatus {

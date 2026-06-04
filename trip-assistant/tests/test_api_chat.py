@@ -51,6 +51,7 @@ def test_chat_generates_session_id_when_missing(monkeypatch):
     data = response.json()
     UUID(data["session_id"])
     assert data["artifacts"] == {}
+    assert data["execution_trace"] == {"steps": [], "summary": {}}
     assert data["response"] == "已处理：杭州有什么好玩的"
     assert fake_agent.calls == [
         {"message": "杭州有什么好玩的", "session_id": data["session_id"]}
@@ -127,5 +128,7 @@ def test_chat_openapi_uses_structured_artifact_schema(monkeypatch):
     chat_response = schemas["ChatResponse"]
     artifacts_schema = chat_response["properties"]["artifacts"]
     assert artifacts_schema["$ref"].endswith("/ChatArtifacts")
+    assert chat_response["properties"]["execution_trace"]["$ref"].endswith("/ExecutionTrace")
     assert "ItineraryArtifact" in schemas
     assert "RouteArtifact" in schemas
+    assert "TraceStep" in schemas

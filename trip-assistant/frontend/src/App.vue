@@ -4,7 +4,7 @@ import { Plus, RefreshCw } from "@lucide/vue";
 import { fetchExternalStatus, sendChatMessage } from "./api";
 import ChatPanel from "./components/ChatPanel.vue";
 import StatusPanel from "./components/StatusPanel.vue";
-import type { ChatArtifacts, ChatMessage, ExternalStatusResponse, MessageRole } from "./types";
+import type { ChatArtifacts, ChatMessage, ExecutionTrace, ExternalStatusResponse, MessageRole } from "./types";
 
 const SESSION_STORAGE_KEY = "travelMindSessionId";
 
@@ -22,6 +22,7 @@ const messages = ref<ChatMessage[]>([
     content:
       "您好，我是 TravelMind。可以输入完整旅行需求，也可以用右侧快捷脚本演示多轮规划、路线优化和雨天调整。",
     artifacts: {},
+    execution_trace: { steps: [], summary: {} },
   },
 ]);
 
@@ -51,12 +52,18 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-function addMessage(role: MessageRole, content: string, artifacts: ChatArtifacts = {}) {
+function addMessage(
+  role: MessageRole,
+  content: string,
+  artifacts: ChatArtifacts = {},
+  executionTrace: ExecutionTrace = { steps: [], summary: {} },
+) {
   messages.value.push({
     id: crypto.randomUUID(),
     role,
     content,
     artifacts: artifacts || {},
+    execution_trace: executionTrace || { steps: [], summary: {} },
   });
   nextTick(() => {
     chatPanel.value?.scrollToBottom();
@@ -91,7 +98,7 @@ async function submitMessage(messageOverride = "") {
       sessionId.value = data.session_id;
       window.localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
     }
-    addMessage("assistant", data.response || "处理完成", data.artifacts || {});
+    addMessage("assistant", data.response || "处理完成", data.artifacts || {}, data.execution_trace || { steps: [], summary: {} });
   } catch (error) {
     addMessage("assistant", error.message || "抱歉，处理请求时出现错误。");
   } finally {
@@ -112,6 +119,7 @@ function newSession() {
       role: "assistant",
       content: "已开启新会话。请输入新的旅行需求，系统会在首轮请求后创建新的 session_id。",
       artifacts: {},
+      execution_trace: { steps: [], summary: {} },
     },
   ];
 }

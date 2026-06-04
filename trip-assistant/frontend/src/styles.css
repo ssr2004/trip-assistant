@@ -219,6 +219,97 @@ button:disabled {
   color: #607287;
 }
 
+.trace-panel {
+  margin-top: 10px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+}
+
+.trace-header,
+.trace-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.trace-header {
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.trace-header strong,
+.trace-header span {
+  display: block;
+}
+
+.trace-header strong {
+  color: #17202a;
+  font-size: 13px;
+}
+
+.trace-header span {
+  margin-top: 3px;
+  color: #607287;
+  font-size: 12px;
+}
+
+.trace-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trace-step {
+  padding: 9px;
+  background: #f8fafc;
+  border: 1px solid #e1e9f1;
+  border-left-width: 3px;
+  border-radius: 8px;
+}
+
+.trace-step.success {
+  border-left-color: #16835f;
+}
+
+.trace-step.failed {
+  border-left-color: #bd3c3c;
+}
+
+.trace-step svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: #176b5b;
+}
+
+.trace-step.failed svg {
+  color: #bd3c3c;
+}
+
+.trace-step b,
+.trace-step span,
+.trace-step small {
+  display: block;
+}
+
+.trace-step b {
+  color: #1e344d;
+  font-size: 12px;
+}
+
+.trace-step span,
+.trace-step small {
+  margin-top: 3px;
+  color: #607287;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .artifact-panel {
   display: grid;
   gap: 12px;

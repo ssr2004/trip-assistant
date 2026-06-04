@@ -16,6 +16,7 @@ from core.memory.manager import MemoryManager
 from core.intent import IntentParser
 from core.response_builder import ResponseBuilder
 from core.artifacts import normalize_chat_artifacts
+from core.trace import normalize_execution_trace
 from rag.dynamic_store import DynamicRAGStore
 from rag.retriever import RAGRetriever
 from tools.registry import ToolRegistry
@@ -929,7 +930,117 @@ class TravelAgent:
         return {
             "response": response,
             "artifacts": self._build_response_artifacts(result.get("task_results", [])),
+            "execution_trace": self._build_execution_trace(result),
         }
+
+    def _build_execution_trace(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a sanitized execution timeline for frontend observability."""
+        intent = state.get("intent") if isinstance(state.get("intent"), dict) else {}
+        tasks = state.get("tasks", []) or []
+        task_results = state.get("task_results", []) or []
+        rag_context = state.get("rag_context", []) or []
+        dynamic_rag_context = state.get("dynamic_rag_context", {}) or {}
+
+        steps: List[Dict[str, Any]] = []
+        intent_type = intent.get("intent") or "general_chat"
+        confidence = intent.get("confidence")
+        intent_detail = f"confidence={confidence:.2f}" if isinstance(confidence, (int, float)) else None
+        steps.append({
+            "stage": "intent",
+            "label": intent_type,
+            "status": "success",
+            "detail": intent_detail,
+        })
+        steps.append({
+            "stage": "context",
+            "label": "RAG context",
+            "status": "success",
+            "detail": f"static_sources={len(rag_context)}",
+            "source_count": len(rag_context),
+        })
+        steps.append({
+            "stage": "planning",
+            "label": "Task plan",
+            "status": "success",
+            "detail": f"tasks={len(tasks)}",
+        })
+
+        for task_result in task_results:
+            task = task_result.get("task", {}) or {}
+            task_type = task.get("task_type") or "tool_call"
+            tool_name = task.get("tool")
+            label = task.get("name") or tool_name or task_type
+            success = bool(task_result.get("success"))
+            data = self._extract_result_data(task_result)
+            steps.append({
+                "stage": "tool" if tool_name else "task",
+                "label": label,
+                "status": "success" if success else "failed",
+                "detail": self._summarize_trace_result(task_result, data),
+                "task_type": task_type,
+                "tool": tool_name,
+                "source_count": self._count_trace_sources(data),
+            })
+
+        dynamic_source_count = len(dynamic_rag_context.get("sources", []) or [])
+        dynamic_document_count = dynamic_rag_context.get("document_count", 0) or 0
+        if dynamic_source_count or dynamic_document_count:
+            steps.append({
+                "stage": "rag",
+                "label": "Dynamic RAG",
+                "status": "success",
+                "detail": f"documents={dynamic_document_count}, sources={dynamic_source_count}",
+                "source_count": dynamic_source_count,
+            })
+
+        summary = {
+            "intent": intent_type,
+            "task_count": len(tasks),
+            "tool_count": sum(1 for task in tasks if task.get("tool")),
+            "failed_count": sum(1 for result in task_results if not result.get("success")),
+            "source_count": len(rag_context) + dynamic_source_count,
+        }
+        return normalize_execution_trace({"steps": steps, "summary": summary})
+
+    def _summarize_trace_result(self, task_result: Dict[str, Any], data: Any) -> str | None:
+        """Summarize task output without exposing raw payloads or sensitive values."""
+        if not task_result.get("success"):
+            return self._short_trace_text(task_result.get("error") or "execution failed")
+
+        if isinstance(data, dict):
+            if data.get("itinerary"):
+                return f"itinerary_days={len(data.get('itinerary') or [])}"
+            if data.get("forecasts"):
+                return f"forecasts={len(data.get('forecasts') or [])}"
+            if data.get("attractions"):
+                return f"attractions={len(data.get('attractions') or [])}"
+            if data.get("segments"):
+                return f"route_segments={len(data.get('segments') or [])}"
+            if data.get("route_summary"):
+                route_summary = data.get("route_summary") or {}
+                return f"route_segments={len(route_summary.get('segments') or [])}"
+            if data.get("weather_summary"):
+                weather_summary = data.get("weather_summary") or {}
+                return f"weather_adjusted_days={len(weather_summary.get('adjusted_days') or [])}"
+            for key in ("summary", "message", "answer", "question"):
+                if data.get(key):
+                    return self._short_trace_text(data.get(key))
+
+        if isinstance(data, str):
+            return self._short_trace_text(data)
+        return None
+
+    def _count_trace_sources(self, data: Any) -> int | None:
+        """Count visible sources in a task result."""
+        if not isinstance(data, dict):
+            return None
+        source_keys = ("rag_documents", "sources", "documents")
+        count = sum(len(data.get(key) or []) for key in source_keys if isinstance(data.get(key), list))
+        return count or None
+
+    def _short_trace_text(self, value: Any, limit: int = 80) -> str:
+        text = str(value).strip().replace("\n", " ")
+        return text if len(text) <= limit else f"{text[:limit]}..."
 
     def _build_response_artifacts(self, task_results: List[Dict]) -> Dict[str, Any]:
         """从任务结果中提取前端可视化展示数据"""
