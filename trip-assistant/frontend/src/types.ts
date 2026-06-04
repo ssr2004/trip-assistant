@@ -110,6 +110,10 @@ export interface TraceStep {
   detail?: string | null;
   task_type?: string | null;
   tool?: string | null;
+  duration_ms?: number | null;
+  execution_mode?: string | null;
+  error_type?: string | null;
+  result_summary?: string | null;
   source_count?: number | null;
 }
 
@@ -121,6 +125,7 @@ export interface ExecutionTrace {
     tool_count?: number;
     failed_count?: number;
     source_count?: number;
+    total_duration_ms?: number;
     [key: string]: number | string | boolean | undefined;
   };
 }

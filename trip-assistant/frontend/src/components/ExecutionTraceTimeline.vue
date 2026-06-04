@@ -26,6 +26,28 @@ function stageLabel(stage: string): string {
 function stepKey(step: TraceStep, index: number): string {
   return `${step.stage}-${step.tool || step.label}-${index}`;
 }
+
+function modeLabel(mode?: string | null): string {
+  const labels: Record<string, string> = {
+    real_api: "Real API",
+    mock_fallback: "Mock",
+    local_data: "Local",
+    internal_rule: "Rule",
+    internal_revision: "Revision",
+    dynamic_rag: "Dynamic RAG",
+    template: "Template",
+    llm: "LLM",
+    tool: "Tool",
+  };
+  return mode ? labels[mode] || mode : "";
+}
+
+function formatDuration(duration?: number | null): string {
+  if (duration === null || duration === undefined) {
+    return "";
+  }
+  return `${Math.max(Math.round(duration), 0)}ms`;
+}
 </script>
 
 <template>
@@ -35,6 +57,7 @@ function stepKey(step: TraceStep, index: number): string {
         <strong>Execution Trace</strong>
         <span>
           {{ trace.summary.task_count || 0 }} tasks /
+          {{ trace.summary.total_duration_ms || 0 }}ms /
           {{ trace.summary.source_count || 0 }} sources
         </span>
       </div>
@@ -53,6 +76,14 @@ function stepKey(step: TraceStep, index: number): string {
         <div>
           <b>{{ stageLabel(step.stage) }} · {{ step.label }}</b>
           <span v-if="step.detail">{{ step.detail }}</span>
+          <span v-else-if="step.result_summary">{{ step.result_summary }}</span>
+          <div class="trace-badges">
+            <em v-if="step.duration_ms !== undefined && step.duration_ms !== null">
+              {{ formatDuration(step.duration_ms) }}
+            </em>
+            <em v-if="step.execution_mode">{{ modeLabel(step.execution_mode) }}</em>
+            <em v-if="step.error_type" class="error">{{ step.error_type }}</em>
+          </div>
           <small v-if="step.tool || step.source_count">
             {{ step.tool || step.task_type }}
             <template v-if="step.source_count"> / {{ step.source_count }} sources</template>

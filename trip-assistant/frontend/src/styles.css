@@ -310,6 +310,33 @@ button:disabled {
   line-height: 1.4;
 }
 
+.trace-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.trace-badges em {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  color: #24445b;
+  background: #eef5fb;
+  border: 1px solid #d5e2ee;
+  border-radius: 999px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.trace-badges em.error {
+  color: #9f2d2d;
+  background: #fff2f2;
+  border-color: #efc5c5;
+}
+
 .artifact-panel {
   display: grid;
   gap: 12px;

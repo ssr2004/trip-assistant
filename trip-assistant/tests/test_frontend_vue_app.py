@@ -67,6 +67,9 @@ def test_frontend_has_typescript_contract_boundary():
     assert "export interface ChatArtifacts" in types_ts
     assert "export interface ChatResponse" in types_ts
     assert "export interface ExecutionTrace" in types_ts
+    assert "duration_ms" in types_ts
+    assert "execution_mode" in types_ts
+    assert "error_type" in types_ts
     assert "execution_trace" in types_ts
     assert "export interface ExternalStatusResponse" in types_ts
     assert '<script setup lang="ts">' in app_vue
@@ -93,6 +96,10 @@ def test_frontend_renders_execution_trace_timeline():
     assert "message.execution_trace" in chat_panel
     assert "Execution Trace" in trace_vue
     assert "trace.summary.task_count" in trace_vue
+    assert "trace.summary.total_duration_ms" in trace_vue
+    assert "step.duration_ms" in trace_vue
+    assert "step.execution_mode" in trace_vue
+    assert "step.error_type" in trace_vue
     assert "data.execution_trace" in app_vue
 
 

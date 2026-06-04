@@ -13,6 +13,10 @@ class TraceStep(BaseModel):
     detail: str | None = None
     task_type: str | None = None
     tool: str | None = None
+    duration_ms: int | None = None
+    execution_mode: str | None = None
+    error_type: str | None = None
+    result_summary: str | None = None
     source_count: int | None = None
 
 

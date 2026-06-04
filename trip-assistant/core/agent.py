@@ -4,6 +4,7 @@
 """
 import copy
 import re
+import time
 from typing import Dict, List, AsyncGenerator, Any, Optional
 
 from langchain_core.messages import HumanMessage, AIMessage
@@ -99,75 +100,38 @@ class TravelAgent:
         return {"tasks": tasks}
 
     async def _execute_tasks(self, state: AgentState) -> Dict:
-        """执行任务"""
+        """执行任务并记录轻量执行元信息。"""
         tasks = state.get("tasks", [])
         results = []
-
         result_by_task_id = {}
 
         for task in sorted(tasks, key=lambda item: item.get("priority", 99)):
             task_type = task.get("task_type", "tool_call")
+            started_at = time.perf_counter()
 
             if task_type == "ask_user":
                 task_result = self._build_internal_result(task, task.get("params", {}))
-                results.append(task_result)
-                self._index_task_result(task_result, result_by_task_id)
-                continue
-
-            if task_type == "recommend_destination":
+                task_result = self._finalize_task_result(task_result, started_at)
+            elif task_type == "recommend_destination":
                 task_result = self._build_internal_result(task, self._recommend_destinations(task))
-                results.append(task_result)
-                self._index_task_result(task_result, result_by_task_id)
-                continue
-
-            if task_type == "dynamic_rag_query":
+                task_result = self._finalize_task_result(task_result, started_at)
+            elif task_type == "dynamic_rag_query":
                 task_result = self._build_internal_result(
                     task,
                     self._query_dynamic_rag(task, state.get("session_id", "default")),
                 )
-                results.append(task_result)
-                self._index_task_result(task_result, result_by_task_id)
-                continue
-
-            if task_type == "revise_itinerary":
+                task_result = self._finalize_task_result(task_result, started_at)
+            elif task_type == "revise_itinerary":
                 task_result = self._build_internal_result(
                     task,
                     await self._revise_itinerary(task, state.get("session_id", "default")),
                 )
-                results.append(task_result)
-                self._index_task_result(task_result, result_by_task_id)
-                continue
+                task_result = self._finalize_task_result(task_result, started_at)
+            else:
+                task_result = await self._execute_tool_task(task, result_by_task_id, started_at)
 
-            tool_name = task.get("tool")
-            params = self._inject_dependency_context(
-                task=task,
-                params=task.get("params", {}),
-                result_by_task_id=result_by_task_id,
-            )
-
-            if not tool_name:
-                task_result = self._build_error_result(task, "任务缺少工具名称")
-                results.append(task_result)
-                self._index_task_result(task_result, result_by_task_id)
-                continue
-
-            try:
-                result = await self.tool_registry.execute(tool_name, params)
-                result = self._normalize_tool_result(result)
-                tool_success = result.get("success", True) if isinstance(result, dict) else True
-                tool_error = result.get("error") if isinstance(result, dict) else None
-                task_result = {
-                    "task": task,
-                    "success": tool_success,
-                    "result": result,
-                    "error": tool_error,
-                }
-                results.append(task_result)
-                self._index_task_result(task_result, result_by_task_id)
-            except Exception as exc:
-                task_result = self._build_error_result(task, str(exc))
-                results.append(task_result)
-                self._index_task_result(task_result, result_by_task_id)
+            results.append(task_result)
+            self._index_task_result(task_result, result_by_task_id)
 
         messages = state.get("messages", [])
         query = messages[-1].content if messages else ""
@@ -179,6 +143,48 @@ class TravelAgent:
         )
         self._collect_itinerary_context(results, session_id)
         return {"task_results": results, "dynamic_rag_context": dynamic_rag_context}
+
+    async def _execute_tool_task(
+        self,
+        task: Dict[str, Any],
+        result_by_task_id: Dict[str, Dict],
+        started_at: float,
+    ) -> Dict[str, Any]:
+        """Execute a tool task and attach trace metadata."""
+        tool_name = task.get("tool")
+        params = self._inject_dependency_context(
+            task=task,
+            params=task.get("params", {}),
+            result_by_task_id=result_by_task_id,
+        )
+
+        if not tool_name:
+            task_result = self._build_error_result(task, "任务缺少工具名称")
+            return self._finalize_task_result(task_result, started_at, error_type="missing_tool")
+
+        try:
+            result = await self.tool_registry.execute(tool_name, params)
+            result = self._normalize_tool_result(result)
+            tool_success = result.get("success", True) if isinstance(result, dict) else True
+            tool_error = result.get("error") if isinstance(result, dict) else None
+            task_result = {
+                "task": task,
+                "success": tool_success,
+                "result": result,
+                "error": tool_error,
+            }
+            return self._finalize_task_result(
+                task_result,
+                started_at,
+                error_type="tool_error" if not tool_success else None,
+            )
+        except Exception as exc:
+            task_result = self._build_error_result(task, str(exc))
+            return self._finalize_task_result(
+                task_result,
+                started_at,
+                error_type=exc.__class__.__name__,
+            )
 
     async def _generate_response(self, state: AgentState) -> Dict:
         """生成最终回复"""
@@ -214,6 +220,63 @@ class TravelAgent:
             "result": None,
             "error": error,
         }
+
+    def _finalize_task_result(
+        self,
+        task_result: Dict[str, Any],
+        started_at: float,
+        error_type: str | None = None,
+    ) -> Dict[str, Any]:
+        """Attach execution metadata used by trace observability."""
+        duration_ms = max(round((time.perf_counter() - started_at) * 1000), 0)
+        data = self._extract_result_data(task_result)
+        task_result["meta"] = {
+            "duration_ms": duration_ms,
+            "execution_mode": self._resolve_execution_mode(task_result, data),
+            "error_type": error_type or self._resolve_error_type(task_result),
+            "result_summary": self._summarize_trace_result(task_result, data),
+        }
+        return task_result
+
+    def _resolve_execution_mode(self, task_result: Dict[str, Any], data: Any) -> str:
+        """Infer how a task was executed without exposing raw provider credentials."""
+        task = task_result.get("task", {}) or {}
+        task_type = task.get("task_type")
+        tool_name = task.get("tool")
+        result = task_result.get("result")
+        metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
+
+        if task_type == "dynamic_rag_query":
+            return "dynamic_rag"
+        if task_type == "revise_itinerary":
+            return "internal_revision"
+        if task_type in {"ask_user", "recommend_destination"}:
+            return "internal_rule"
+
+        source = str(metadata.get("source") or "")
+        if metadata.get("mock") is True:
+            return "mock_fallback"
+        if source == "external_api":
+            return "real_api"
+        if "mock" in source:
+            return "mock_fallback"
+        if source.startswith("local_") or source in {"mock_flight_data", "mock_hotel_data", "mock_attraction_data"}:
+            return "local_data"
+        if tool_name == "generate_itinerary" and isinstance(data, dict):
+            generation_mode = data.get("generation_mode")
+            if generation_mode in {"llm", "template"}:
+                return str(generation_mode)
+        return "tool"
+
+    def _resolve_error_type(self, task_result: Dict[str, Any]) -> str | None:
+        """Classify non-exception task failures for trace display."""
+        if task_result.get("success"):
+            return None
+        result = task_result.get("result")
+        metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
+        if metadata.get("mock") is True:
+            return "mock_fallback_error"
+        return "task_failed"
 
     def _index_task_result(self, task_result: Dict, result_by_task_id: Dict[str, Dict]) -> None:
         """按task_id索引任务结果，供后续依赖任务读取"""
@@ -972,13 +1035,19 @@ class TravelAgent:
             label = task.get("name") or tool_name or task_type
             success = bool(task_result.get("success"))
             data = self._extract_result_data(task_result)
+            meta = task_result.get("meta", {}) or {}
+            result_summary = meta.get("result_summary") or self._summarize_trace_result(task_result, data)
             steps.append({
                 "stage": "tool" if tool_name else "task",
                 "label": label,
                 "status": "success" if success else "failed",
-                "detail": self._summarize_trace_result(task_result, data),
+                "detail": result_summary,
                 "task_type": task_type,
                 "tool": tool_name,
+                "duration_ms": meta.get("duration_ms"),
+                "execution_mode": meta.get("execution_mode"),
+                "error_type": meta.get("error_type"),
+                "result_summary": result_summary,
                 "source_count": self._count_trace_sources(data),
             })
 
@@ -999,6 +1068,10 @@ class TravelAgent:
             "tool_count": sum(1 for task in tasks if task.get("tool")),
             "failed_count": sum(1 for result in task_results if not result.get("success")),
             "source_count": len(rag_context) + dynamic_source_count,
+            "total_duration_ms": sum(
+                int((result.get("meta", {}) or {}).get("duration_ms") or 0)
+                for result in task_results
+            ),
         }
         return normalize_execution_trace({"steps": steps, "summary": summary})
 
