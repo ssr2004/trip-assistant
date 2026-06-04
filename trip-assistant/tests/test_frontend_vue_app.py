@@ -23,9 +23,11 @@ def test_frontend_package_has_vue_build_scripts():
     assert '"vue"' in package_json
     assert '"vite"' in package_json
     assert '"@lucide/vue"' in package_json
+    assert '"@playwright/test"' in package_json
     assert '"typescript"' in package_json
     assert '"vue-tsc"' in package_json
     assert '"build": "vue-tsc --noEmit && vite build"' in package_json
+    assert '"test:e2e": "playwright test"' in package_json
 
 
 def test_frontend_calls_chat_and_external_status_apis():
@@ -120,6 +122,23 @@ def test_frontend_has_resume_demo_script_shortcuts():
     ]
     for text in expected_script:
         assert text in status_panel
+
+
+def test_frontend_has_playwright_demo_acceptance():
+    """前端包含浏览器级演示验收配置和用例"""
+    playwright_config = (FRONTEND_DIR / "playwright.config.ts").read_text(encoding="utf-8")
+    demo_spec = (FRONTEND_DIR / "e2e" / "demo-console.spec.ts").read_text(encoding="utf-8")
+
+    assert 'testDir: "./e2e"' in playwright_config
+    assert "npm run dev" in playwright_config
+    assert "chromium-desktop" in playwright_config
+    assert "chromium-mobile" in playwright_config
+    assert "**/api/external/status" in demo_spec
+    assert "**/api/chat" in demo_spec
+    assert "runs the resume demo script with artifacts and trace" in demo_spec
+    assert "keeps the demo controls usable on mobile viewport" in demo_spec
+    assert "Execution Trace" in demo_spec
+    assert "Dynamic RAG" in demo_spec
 
 
 def test_frontend_avoids_raw_html_rendering():
