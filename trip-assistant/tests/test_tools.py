@@ -148,6 +148,7 @@ async def test_registry_executes_new_tools():
     assert "retrieve_guide" in tools
     assert "generate_itinerary" in tools
     assert "optimize_route_order" in tools
+    assert "get_weather_forecast" in tools
 
     flight_result = await registry.execute("search_flights", {"origin": "郑州", "destination": "杭州"})
     hotel_result = await registry.execute("search_hotels", {"location": "杭州"})
@@ -155,6 +156,7 @@ async def test_registry_executes_new_tools():
     policy_result = await registry.execute("retrieve_policy", {"query": "机票能退吗"})
     guide_result = await registry.execute("retrieve_guide", {"query": "杭州三天旅行攻略", "destination": "杭州"})
     itinerary_result = await registry.execute("generate_itinerary", {"destination": "杭州", "duration": 3})
+    weather_result = await registry.execute("get_weather_forecast", {"city": "杭州", "days": 3})
 
     assert flight_result["success"] is True
     assert hotel_result["success"] is True
@@ -162,3 +164,4 @@ async def test_registry_executes_new_tools():
     assert policy_result["success"] is True
     assert guide_result["success"] is True
     assert itinerary_result["success"] is True
+    assert weather_result["success"] is True

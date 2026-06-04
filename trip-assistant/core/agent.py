@@ -397,7 +397,9 @@ class TravelAgent:
         target_names = self._extract_revision_attractions(query, attraction_names)
         target_day = self._extract_revision_day(query)
 
-        if self._is_route_optimization_revision(query):
+        if self._is_weather_adjustment_revision(query):
+            result = await self._apply_weather_adjustment_revision(query, itinerary, revised_context)
+        elif self._is_route_optimization_revision(query):
             result = await self._apply_route_optimization_revision(query, itinerary, revised_context, target_day)
         elif self._is_replace_revision(query):
             result = self._apply_replace_revision(query, itinerary, revised_context, target_names)
@@ -424,6 +426,7 @@ class TravelAgent:
             "message": result.get("message"),
             "itinerary": itinerary,
             "route_summary": result.get("route_summary"),
+            "weather_summary": result.get("weather_summary"),
             "sources": ["上一轮旅行方案", "会话动态景点数据"],
         }
 
@@ -471,6 +474,87 @@ class TravelAgent:
     def _is_route_optimization_revision(self, query: str) -> bool:
         """判断是否为路线顺序优化请求"""
         return any(keyword in query for keyword in ["排一下顺序", "排序", "按距离", "按路线", "路线顺序", "优化路线", "优化一下"])
+
+    def _is_weather_adjustment_revision(self, query: str) -> bool:
+        """判断是否为天气感知行程调整请求"""
+        return any(keyword in query for keyword in ["如果下雨", "下雨怎么办", "雨天", "避开雨天", "下雨的话", "降雨"])
+
+    async def _apply_weather_adjustment_revision(self, query: str, itinerary: List[Dict], context: Dict) -> Dict:
+        """根据天气预报调整行程"""
+        destination = context.get("destination") or "杭州"
+        weather_result = await self.tool_registry.execute(
+            "get_weather_forecast",
+            {"city": destination, "days": context.get("duration") or len(itinerary) or 3},
+        )
+        if not weather_result.get("success"):
+            return {"success": False, "action": "weather_adjust", "message": weather_result.get("error") or "天气查询失败。"}
+
+        weather_data = weather_result.get("data", {})
+        forecasts = weather_data.get("forecasts", []) or []
+        adjusted_days = []
+        for index, forecast in enumerate(forecasts[:len(itinerary)], start=1):
+            if forecast.get("suitable_for_outdoor") is False:
+                day = self._find_day(itinerary, index)
+                if not day:
+                    continue
+                self._replace_outdoor_with_rainy_activities(day, destination)
+                adjusted_days.append({
+                    "day": index,
+                    "date": forecast.get("date"),
+                    "weather": forecast.get("weather"),
+                    "temperature": forecast.get("temperature"),
+                    "advice": "不适合长时间户外活动，已优先调整为室内或低强度安排。",
+                })
+
+        if not adjusted_days:
+            return {
+                "success": True,
+                "action": "weather_adjust",
+                "summary": "天气整体适合户外游览，暂不需要大幅调整行程。",
+                "weather_summary": {
+                    "city": weather_data.get("city") or destination,
+                    "adjusted_days": [],
+                    "forecasts": forecasts,
+                },
+            }
+
+        return {
+            "success": True,
+            "action": "weather_adjust",
+            "summary": "已根据雨天天气将部分户外安排调整为室内或低强度活动。",
+            "weather_summary": {
+                "city": weather_data.get("city") or destination,
+                "adjusted_days": adjusted_days,
+                "forecasts": forecasts,
+            },
+        }
+
+    def _replace_outdoor_with_rainy_activities(self, day: Dict, destination: str) -> None:
+        """将雨天不适合户外的活动替换为室内或低强度安排"""
+        rainy_replacements = self._rainy_day_replacements(destination)
+        outdoor_keywords = ["西湖", "西溪", "湿地", "海边", "亚龙湾", "户外", "散步", "游览城市核心景区"]
+        activities = day.get("activities", []) or []
+        kept = [activity for activity in activities if not any(keyword in str(activity) for keyword in outdoor_keywords)]
+        for replacement in rainy_replacements:
+            if replacement not in kept:
+                kept.append(replacement)
+            if len(kept) >= max(len(activities), 3):
+                break
+        day["activities"] = kept
+        note = day.get("notes", "")
+        rain_note = " 已根据雨天天气调整为室内或低强度安排。"
+        if rain_note.strip() not in note:
+            day["notes"] = f"{note}{rain_note}".strip()
+
+    def _rainy_day_replacements(self, destination: str) -> List[str]:
+        """按城市返回雨天替代活动"""
+        replacements = {
+            "杭州": ["浙江省博物馆", "中国茶叶博物馆", "杭州特色美食体验", "湖滨银泰室内休闲"],
+            "成都": ["四川博物院", "成都特色美食体验", "太古里室内休闲"],
+            "厦门": ["厦门博物馆", "咖啡馆休闲", "闽南特色美食体验"],
+            "三亚": ["酒店休闲", "海鲜美食体验", "室内免税店购物"],
+        }
+        return replacements.get(destination, ["城市博物馆", "当地美食体验", "室内休闲"])
 
     async def _apply_route_optimization_revision(
         self,

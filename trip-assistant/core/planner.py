@@ -21,6 +21,7 @@ class TaskPlanner:
         "retrieve_policy",
         "retrieve_guide",
         "generate_itinerary",
+        "get_weather_forecast",
     }
 
     def __init__(self, llm_client: Optional[LLMClient] = None, llm_planner_enabled: bool = False):
@@ -157,6 +158,15 @@ class TaskPlanner:
 
         if intent_type == "itinerary_revision":
             return self._build_itinerary_revision_plan(intent_type, user_query)
+
+        if intent_type == "weather_query":
+            return self._build_single_tool_plan(
+                intent_type=intent_type,
+                tool="get_weather_forecast",
+                name="查询天气预报",
+                params={"city": entities.get("destination"), "days": entities.get("duration") or 3},
+                reason="用户询问目的地天气，需要查询天气预报并给出旅行建议。",
+            )
 
         return TaskPlan(
             intent=intent_type,

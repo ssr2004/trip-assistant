@@ -48,6 +48,7 @@ class IntentParser:
         "guide_query": [],
         "dynamic_knowledge_query": [],
         "itinerary_revision": [],
+        "weather_query": [],
         "general_chat": [],
     }
 
@@ -108,6 +109,12 @@ class IntentParser:
             "门票可以退", "门票能退", "退款", "退房", "航班延误",
         ]):
             return "policy_query"
+
+        if self._is_weather_adjustment_query(text):
+            return "itinerary_revision"
+
+        if self._is_weather_query(text):
+            return "weather_query"
 
         if self._is_itinerary_revision(text):
             return "itinerary_revision"
@@ -170,6 +177,17 @@ class IntentParser:
         poi_keywords = ["西湖", "灵隐寺", "西溪", "宋城", "景点", "行程"]
         return any(keyword in text for keyword in revision_keywords) and any(keyword in text for keyword in poi_keywords)
 
+    def _is_weather_query(self, text: str) -> bool:
+        """判断是否为天气查询"""
+        weather_keywords = ["天气", "下雨", "降雨", "气温", "温度", "冷不冷", "热不热", "穿什么"]
+        return any(keyword in text for keyword in weather_keywords)
+
+    def _is_weather_adjustment_query(self, text: str) -> bool:
+        """判断是否为基于天气的行程调整"""
+        rain_keywords = ["如果下雨", "下雨怎么办", "雨天", "避开雨天", "下雨的话", "降雨"]
+        adjustment_keywords = ["怎么办", "调整", "安排", "行程", "避开"]
+        return any(keyword in text for keyword in rain_keywords) and any(keyword in text for keyword in adjustment_keywords)
+
     def _extract_entities(self, text: str, intent: str) -> Dict:
         """提取旅行实体"""
         origin, destination = self._extract_route(text, intent)
@@ -205,7 +223,7 @@ class IntentParser:
         found_cities = self._find_cities(text)
         if len(found_cities) >= 2:
             return found_cities[0], found_cities[1]
-        if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan", "guide_query", "dynamic_knowledge_query", "itinerary_revision"}:
+        if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan", "guide_query", "dynamic_knowledge_query", "itinerary_revision", "weather_query"}:
             return None, found_cities[0]
         return None, None
 
@@ -343,7 +361,7 @@ class IntentParser:
                     content=(
                         "请解析下面的旅行需求，并返回严格JSON。\n"
                         "JSON字段必须包含：intent、entities、confidence、missing_slots、followup_question。\n"
-                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、guide_query、dynamic_knowledge_query、itinerary_revision、general_chat。\n"
+                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、guide_query、dynamic_knowledge_query、itinerary_revision、weather_query、general_chat。\n"
                         "entities必须包含 origin、destination、departure_date、return_date、duration、budget、travelers、preferences。\n"
                         f"用户输入：{user_input}\n"
                         f"规则解析结果：{json.dumps(rule_result, ensure_ascii=False)}"
