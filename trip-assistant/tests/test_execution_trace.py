@@ -76,6 +76,13 @@ def test_execution_trace_includes_intent_json_repair_metadata():
                 "source": "llm",
                 "json_repair_attempted": True,
                 "json_repair_success": True,
+                "llm_call_count": 2,
+                "llm_success_count": 2,
+                "llm_failure_count": 0,
+                "llm_duration_ms": 180,
+                "llm_prompt_tokens": 40,
+                "llm_completion_tokens": 20,
+                "llm_total_tokens": 60,
             },
         },
         "tasks": [],
@@ -88,3 +95,55 @@ def test_execution_trace_includes_intent_json_repair_metadata():
     assert "json_repair=success" in intent_step["detail"]
     assert trace["summary"]["json_repair_attempted"] is True
     assert trace["summary"]["json_repair_success"] is True
+    assert trace["summary"]["llm_call_count"] == 2
+    assert trace["summary"]["llm_repair_count"] == 1
+    assert trace["summary"]["llm_duration_ms"] == 180
+    assert trace["summary"]["llm_total_tokens"] == 60
+    assert trace["summary"]["llm_token_usage_available"] is True
+    assert trace["summary"]["llm_cost_basis"] == "provider_token_usage"
+
+
+def test_execution_trace_aggregates_runtime_tool_modes():
+    agent = TravelAgent()
+    real_api_result = {
+        "success": True,
+        "task": {"task_type": "tool_call", "tool": "search_attractions", "name": "Attractions"},
+        "result": {"metadata": {"source": "external_api"}, "data": {"attractions": [1, 2]}},
+        "meta": {
+            "duration_ms": 30,
+            "execution_mode": "real_api",
+            "result_summary": "attractions=2",
+        },
+    }
+    mock_result = {
+        "success": True,
+        "task": {"task_type": "tool_call", "tool": "search_hotels", "name": "Hotels"},
+        "result": {"metadata": {"mock": True}, "data": {"hotels": [1]}},
+        "meta": {
+            "duration_ms": 20,
+            "execution_mode": "mock_fallback",
+            "result_summary": "hotels=1",
+        },
+    }
+    template_result = {
+        "success": True,
+        "task": {"task_type": "generate_itinerary", "tool": "generate_itinerary", "name": "Itinerary"},
+        "result": {"metadata": {"source": "template_itinerary_generator"}, "data": {"itinerary": [1]}},
+        "meta": {
+            "duration_ms": 10,
+            "execution_mode": "template",
+            "result_summary": "itinerary_days=1",
+        },
+    }
+
+    trace = agent._build_execution_trace({
+        "intent": {"intent": "travel_plan", "metadata": {"source": "rule"}},
+        "tasks": [real_api_result["task"], mock_result["task"], template_result["task"]],
+        "task_results": [real_api_result, mock_result, template_result],
+        "rag_context": [],
+    })
+
+    assert trace["summary"]["tool_total_duration_ms"] == 60
+    assert trace["summary"]["real_api_count"] == 1
+    assert trace["summary"]["mock_fallback_count"] == 1
+    assert trace["summary"]["template_task_count"] == 1

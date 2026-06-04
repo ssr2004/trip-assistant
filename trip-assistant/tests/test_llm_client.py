@@ -25,10 +25,19 @@ class FakeChoice:
     message = FakeMessage()
 
 
+class FakeUsage:
+    """Mock OpenAI-compatible token usage."""
+
+    prompt_tokens = 12
+    completion_tokens = 8
+    total_tokens = 20
+
+
 class FakeCompletion:
     """模拟OpenAI完整响应"""
 
     choices = [FakeChoice()]
+    usage = FakeUsage()
 
 
 class FakeCompletions:
@@ -148,6 +157,11 @@ async def test_llm_client_chat_with_mock_openai_client():
     assert response.metadata["model"] == "deepseek-chat"
     assert response.metadata["response_format"] == "json_object"
     assert response.metadata["execution_mode"] == "llm"
+    assert isinstance(response.metadata["duration_ms"], int)
+    assert response.metadata["duration_ms"] >= 0
+    assert response.metadata["prompt_tokens"] == 12
+    assert response.metadata["completion_tokens"] == 8
+    assert response.metadata["total_tokens"] == 20
 
     kwargs = fake_client.chat.completions.kwargs
     assert kwargs["model"] == "deepseek-chat"
@@ -171,6 +185,7 @@ async def test_llm_client_sanitizes_api_key_from_errors():
     assert "sk-test-secret" not in response.error
     assert "***" in response.error
     assert response.metadata["error_type"] == "provider_error"
+    assert isinstance(response.metadata["duration_ms"], int)
 
 
 @pytest.mark.asyncio

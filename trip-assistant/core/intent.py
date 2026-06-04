@@ -380,6 +380,7 @@ class IntentParser:
                 "source": "rule_fallback",
                 "llm_error_type": response.metadata.get("error_type"),
                 "llm_model": response.metadata.get("model"),
+                **self._build_llm_runtime_metadata(response.metadata, initial_success=False),
             }
             return None
 
@@ -405,6 +406,7 @@ class IntentParser:
                 "json_repair_attempted": structured_result.repair_attempted,
                 "json_repair_success": structured_result.repair_success,
                 "json_repair_error_type": structured_result.repair_error_type,
+                **self._build_llm_runtime_metadata(response.metadata, structured_result),
             }
             return None
 
@@ -416,8 +418,40 @@ class IntentParser:
             "provider": response.metadata.get("provider"),
             "json_repair_attempted": structured_result.repair_attempted,
             "json_repair_success": structured_result.repair_success,
+            **self._build_llm_runtime_metadata(response.metadata, structured_result),
         }
         return result
+
+    def _build_llm_runtime_metadata(
+        self,
+        response_metadata: Dict,
+        structured_result=None,
+        initial_success: bool = True,
+    ) -> Dict:
+        """Build sanitized LLM runtime counters for trace aggregation."""
+        repair_attempted = bool(getattr(structured_result, "repair_attempted", False))
+        repair_call_success = bool(getattr(structured_result, "repair_call_success", False))
+        repair_duration_ms = int(getattr(structured_result, "repair_duration_ms", 0) or 0)
+
+        initial_duration_ms = int(response_metadata.get("duration_ms") or 0)
+        prompt_tokens = int(response_metadata.get("prompt_tokens") or 0)
+        completion_tokens = int(response_metadata.get("completion_tokens") or 0)
+        total_tokens = int(response_metadata.get("total_tokens") or 0)
+
+        if structured_result:
+            prompt_tokens += int(getattr(structured_result, "repair_prompt_tokens", 0) or 0)
+            completion_tokens += int(getattr(structured_result, "repair_completion_tokens", 0) or 0)
+            total_tokens += int(getattr(structured_result, "repair_total_tokens", 0) or 0)
+
+        return {
+            "llm_call_count": 1 + int(repair_attempted),
+            "llm_success_count": int(initial_success) + int(repair_call_success),
+            "llm_failure_count": int(not initial_success) + int(repair_attempted and not repair_call_success),
+            "llm_duration_ms": initial_duration_ms + repair_duration_ms,
+            "llm_prompt_tokens": prompt_tokens,
+            "llm_completion_tokens": completion_tokens,
+            "llm_total_tokens": total_tokens,
+        }
 
     def _normalize_llm_intent(self, intent: TravelIntent) -> Dict:
         """规范化LLM解析结果，补齐缺失槽位和追问"""

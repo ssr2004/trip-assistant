@@ -1071,6 +1071,7 @@ class TravelAgent:
                 "source_count": dynamic_source_count,
             })
 
+        runtime_metrics = self._build_runtime_metrics(intent_metadata, task_results)
         summary = {
             "intent": intent_type,
             "intent_source": intent_source,
@@ -1086,8 +1087,41 @@ class TravelAgent:
                 int((result.get("meta", {}) or {}).get("duration_ms") or 0)
                 for result in task_results
             ),
+            **runtime_metrics,
         }
         return normalize_execution_trace({"steps": steps, "summary": summary})
+
+    def _build_runtime_metrics(self, intent_metadata: Dict[str, Any], task_results: List[Dict]) -> Dict[str, Any]:
+        """Aggregate sanitized runtime counters for the trace summary."""
+        mode_counts: Dict[str, int] = {}
+        tool_total_duration_ms = 0
+        for task_result in task_results:
+            meta = task_result.get("meta", {}) or {}
+            mode = str(meta.get("execution_mode") or "unknown")
+            mode_counts[mode] = mode_counts.get(mode, 0) + 1
+            tool_total_duration_ms += int(meta.get("duration_ms") or 0)
+
+        llm_total_tokens = int(intent_metadata.get("llm_total_tokens") or 0)
+        return {
+            "llm_call_count": int(intent_metadata.get("llm_call_count") or 0),
+            "llm_success_count": int(intent_metadata.get("llm_success_count") or 0),
+            "llm_failure_count": int(intent_metadata.get("llm_failure_count") or 0),
+            "llm_fallback_count": int(intent_metadata.get("source") == "rule_fallback"),
+            "llm_repair_count": int(bool(intent_metadata.get("json_repair_attempted"))),
+            "llm_repair_success_count": int(bool(intent_metadata.get("json_repair_success"))),
+            "llm_duration_ms": int(intent_metadata.get("llm_duration_ms") or 0),
+            "llm_prompt_tokens": int(intent_metadata.get("llm_prompt_tokens") or 0),
+            "llm_completion_tokens": int(intent_metadata.get("llm_completion_tokens") or 0),
+            "llm_total_tokens": llm_total_tokens,
+            "llm_token_usage_available": llm_total_tokens > 0,
+            "llm_cost_basis": "provider_token_usage" if llm_total_tokens > 0 else "not_reported",
+            "tool_total_duration_ms": tool_total_duration_ms,
+            "real_api_count": mode_counts.get("real_api", 0),
+            "mock_fallback_count": mode_counts.get("mock_fallback", 0),
+            "template_task_count": mode_counts.get("template", 0),
+            "dynamic_rag_count": mode_counts.get("dynamic_rag", 0),
+            "internal_task_count": mode_counts.get("internal_rule", 0) + mode_counts.get("internal_revision", 0),
+        }
 
     def _intent_execution_mode(self, source: str) -> str:
         """Map intent metadata source to trace execution mode."""

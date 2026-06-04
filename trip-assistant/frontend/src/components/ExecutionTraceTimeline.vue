@@ -49,6 +49,10 @@ function formatDuration(duration?: number | null): string {
   }
   return `${Math.max(Math.round(duration), 0)}ms`;
 }
+
+function summaryNumber(value: unknown): number {
+  return typeof value === "number" ? value : 0;
+}
 </script>
 
 <template>
@@ -63,6 +67,16 @@ function formatDuration(duration?: number | null): string {
         </span>
       </div>
       <ListTree :size="16" />
+    </div>
+
+    <div class="runtime-summary" aria-label="Runtime Metrics">
+      <span>LLM {{ summaryNumber(trace.summary.llm_call_count) }} calls</span>
+      <span>{{ summaryNumber(trace.summary.llm_duration_ms) }}ms LLM</span>
+      <span>{{ summaryNumber(trace.summary.llm_total_tokens) }} tokens</span>
+      <span>{{ summaryNumber(trace.summary.llm_repair_count) }} repairs</span>
+      <span>{{ summaryNumber(trace.summary.real_api_count) }} real API</span>
+      <span>{{ summaryNumber(trace.summary.mock_fallback_count) }} mock</span>
+      <span>{{ summaryNumber(trace.summary.tool_total_duration_ms) }}ms tools</span>
     </div>
 
     <ol class="trace-list">

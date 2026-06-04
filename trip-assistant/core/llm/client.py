@@ -2,6 +2,7 @@
 LLM客户端封装
 提供OpenAI-compatible模型调用和无API Key降级能力
 """
+import time
 from typing import Any, Dict, Optional
 
 from openai import AsyncOpenAI
@@ -40,6 +41,7 @@ class LLMClient:
             标准LLM响应
         """
         model = request.model or self.settings.LLM_MODEL
+        started_at = time.perf_counter()
         temperature = request.temperature
         if temperature is None:
             temperature = self.settings.LLM_TEMPERATURE
@@ -51,7 +53,7 @@ class LLMClient:
                 success=False,
                 content="",
                 error="LLM_API_KEY未配置，已使用规则逻辑降级。",
-                metadata={**metadata, "error_type": "missing_api_key"},
+                metadata={**metadata, "error_type": "missing_api_key", "duration_ms": self._elapsed_ms(started_at)},
             )
 
         if not request.messages:
@@ -59,7 +61,11 @@ class LLMClient:
                 success=False,
                 content="",
                 error="LLM请求缺少messages。",
-                metadata={**self._build_metadata(model=model), "error_type": "invalid_request"},
+                metadata={
+                    **self._build_metadata(model=model),
+                    "error_type": "invalid_request",
+                    "duration_ms": self._elapsed_ms(started_at),
+                },
             )
 
         try:
@@ -73,6 +79,7 @@ class LLMClient:
 
             completion = await self._client.chat.completions.create(**kwargs)
             content = completion.choices[0].message.content or ""
+            usage_metadata = self._extract_usage_metadata(completion)
 
             return LLMResponse(
                 success=True,
@@ -82,6 +89,8 @@ class LLMClient:
                     **self._build_metadata(model=model),
                     "response_format": request.response_format,
                     "execution_mode": "llm",
+                    "duration_ms": self._elapsed_ms(started_at),
+                    **usage_metadata,
                 },
             )
         except Exception as exc:  # pragma: no cover - 具体异常类型由SDK决定
@@ -92,6 +101,7 @@ class LLMClient:
                 metadata={
                     **self._build_metadata(model=model),
                     "error_type": self._classify_error(exc),
+                    "duration_ms": self._elapsed_ms(started_at),
                 },
             )
 
@@ -113,6 +123,35 @@ class LLMClient:
             "fallback": fallback,
             "execution_mode": "rule_fallback" if fallback else "llm",
         }
+
+    def _elapsed_ms(self, started_at: float) -> int:
+        """Return non-negative elapsed milliseconds for runtime observability."""
+        return max(round((time.perf_counter() - started_at) * 1000), 0)
+
+    def _extract_usage_metadata(self, completion: Any) -> Dict[str, int]:
+        """Extract token usage when the provider returns OpenAI-compatible usage."""
+        usage = getattr(completion, "usage", None)
+        if usage is None and isinstance(completion, dict):
+            usage = completion.get("usage")
+        if not usage:
+            return {}
+
+        def read_int(field: str) -> Optional[int]:
+            value = getattr(usage, field, None)
+            if value is None and isinstance(usage, dict):
+                value = usage.get(field)
+            return int(value) if isinstance(value, (int, float)) else None
+
+        metadata: Dict[str, int] = {}
+        for source, target in [
+            ("prompt_tokens", "prompt_tokens"),
+            ("completion_tokens", "completion_tokens"),
+            ("total_tokens", "total_tokens"),
+        ]:
+            value = read_int(source)
+            if value is not None:
+                metadata[target] = value
+        return metadata
 
     def _sanitize_error(self, exc: Exception) -> str:
         """清理错误信息，避免泄露API Key"""

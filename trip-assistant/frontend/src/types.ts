@@ -126,6 +126,24 @@ export interface ExecutionTrace {
     failed_count?: number;
     source_count?: number;
     total_duration_ms?: number;
+    llm_call_count?: number;
+    llm_success_count?: number;
+    llm_failure_count?: number;
+    llm_fallback_count?: number;
+    llm_repair_count?: number;
+    llm_repair_success_count?: number;
+    llm_duration_ms?: number;
+    llm_prompt_tokens?: number;
+    llm_completion_tokens?: number;
+    llm_total_tokens?: number;
+    llm_token_usage_available?: boolean;
+    llm_cost_basis?: string;
+    tool_total_duration_ms?: number;
+    real_api_count?: number;
+    mock_fallback_count?: number;
+    template_task_count?: number;
+    dynamic_rag_count?: number;
+    internal_task_count?: number;
     [key: string]: number | string | boolean | undefined;
   };
 }

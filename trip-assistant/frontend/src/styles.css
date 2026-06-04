@@ -257,6 +257,28 @@ button:disabled {
   font-size: 12px;
 }
 
+.runtime-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 9px 0 0;
+}
+
+.runtime-summary span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  color: #2c455a;
+  background: #f4f7fa;
+  border: 1px solid #dce6ef;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .trace-list {
   display: grid;
   gap: 8px;

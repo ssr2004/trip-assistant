@@ -21,7 +21,12 @@ class StructuredJSONResult:
     error_type: Optional[str] = None
     repair_attempted: bool = False
     repair_success: bool = False
+    repair_call_success: bool = False
     repair_error_type: Optional[str] = None
+    repair_duration_ms: int = 0
+    repair_prompt_tokens: int = 0
+    repair_completion_tokens: int = 0
+    repair_total_tokens: int = 0
 
     @property
     def success(self) -> bool:
@@ -98,7 +103,14 @@ async def parse_or_repair_json_object(
     )
     if not repair_response.success:
         result.repair_error_type = repair_response.metadata.get("error_type")
+        result.repair_duration_ms = int(repair_response.metadata.get("duration_ms") or 0)
         return result
+
+    result.repair_call_success = True
+    result.repair_duration_ms = int(repair_response.metadata.get("duration_ms") or 0)
+    result.repair_prompt_tokens = int(repair_response.metadata.get("prompt_tokens") or 0)
+    result.repair_completion_tokens = int(repair_response.metadata.get("completion_tokens") or 0)
+    result.repair_total_tokens = int(repair_response.metadata.get("total_tokens") or 0)
 
     repaired = parse_llm_json_object(repair_response.content)
     if repaired is None:

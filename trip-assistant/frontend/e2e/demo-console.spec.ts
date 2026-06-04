@@ -30,6 +30,7 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
   await expect(page.getByText("每日行程").first()).toBeVisible();
   await expect(page.getByText("景点推荐").first()).toBeVisible();
   await expect(page.getByText("Execution Trace").first()).toBeVisible();
+  await expect(page.getByText("LLM 1 calls").first()).toBeVisible();
   await expect(page.getByText("Tool · 搜索景点")).toBeVisible();
 
   await page.getByRole("button", { name: /2 雨天调整/ }).click();
@@ -236,6 +237,24 @@ function trace(intent: string, taskSteps: Array<Record<string, unknown>>) {
       failed_count: 0,
       source_count: 3,
       total_duration_ms: 26,
+      llm_call_count: 1,
+      llm_success_count: 1,
+      llm_failure_count: 0,
+      llm_fallback_count: 0,
+      llm_repair_count: 0,
+      llm_repair_success_count: 0,
+      llm_duration_ms: 42,
+      llm_prompt_tokens: 128,
+      llm_completion_tokens: 64,
+      llm_total_tokens: 192,
+      llm_token_usage_available: true,
+      llm_cost_basis: "provider_token_usage",
+      tool_total_duration_ms: 26,
+      real_api_count: taskSteps.filter((step) => step.execution_mode === "real_api").length,
+      mock_fallback_count: taskSteps.filter((step) => step.execution_mode === "mock_fallback").length,
+      template_task_count: taskSteps.filter((step) => step.execution_mode === "template").length,
+      dynamic_rag_count: taskSteps.filter((step) => step.execution_mode === "dynamic_rag").length,
+      internal_task_count: taskSteps.filter((step) => step.execution_mode === "internal_revision").length,
     },
   };
 }
