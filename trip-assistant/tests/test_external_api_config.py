@@ -11,7 +11,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 def test_external_api_settings_defaults():
     """外部API通用配置默认值合理"""
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.EXTERNAL_API_TIMEOUT == 10
     assert settings.EXTERNAL_API_RETRY_TIMES == 2

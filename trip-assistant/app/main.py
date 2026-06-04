@@ -29,6 +29,24 @@ class ChatResponse(BaseModel):
     response: str
 
 
+class ExternalServiceStatus(BaseModel):
+    """外部服务状态"""
+    name: str
+    provider: str
+    capability: str
+    api_key_configured: bool
+    key_source: str | None = None
+    mock_enabled: bool
+    mode: str
+    probe_type: str = "configuration"
+
+
+class ExternalStatusResponse(BaseModel):
+    """外部服务状态响应"""
+    services: list[ExternalServiceStatus]
+    summary: dict[str, int | bool]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -81,6 +99,84 @@ async def chat(request: ChatRequest):
     response = await agent.arun(message, session_id)
 
     return ChatResponse(session_id=session_id, response=response)
+
+
+@app.get("/api/external/status", response_model=ExternalStatusResponse)
+async def external_status():
+    """查看外部API配置状态，不暴露真实密钥"""
+    services = [
+        _build_external_service_status(
+            name="amap_poi",
+            provider="amap",
+            capability="poi_search",
+            api_key_configured=bool(settings.AMAP_API_KEY),
+            key_source="AMAP_API_KEY" if settings.AMAP_API_KEY else None,
+        ),
+        _build_external_service_status(
+            name="amap_route",
+            provider="amap",
+            capability="route_distance",
+            api_key_configured=bool(settings.AMAP_API_KEY),
+            key_source="AMAP_API_KEY" if settings.AMAP_API_KEY else None,
+        ),
+        _build_external_service_status(
+            name="weather",
+            provider="amap",
+            capability="weather_forecast",
+            api_key_configured=bool(settings.WEATHER_API_KEY or settings.AMAP_API_KEY),
+            key_source=_weather_key_source(),
+        ),
+    ]
+    unavailable_count = sum(1 for service in services if service.mode == "unavailable")
+    mock_count = sum(1 for service in services if service.mode == "mock_fallback")
+    real_api_count = sum(1 for service in services if service.mode == "real_api")
+    return ExternalStatusResponse(
+        services=services,
+        summary={
+            "total": len(services),
+            "real_api_count": real_api_count,
+            "mock_fallback_count": mock_count,
+            "unavailable_count": unavailable_count,
+            "all_operational": unavailable_count == 0,
+        },
+    )
+
+
+def _build_external_service_status(
+    name: str,
+    provider: str,
+    capability: str,
+    api_key_configured: bool,
+    key_source: str | None,
+) -> ExternalServiceStatus:
+    """构建外部服务配置状态"""
+    return ExternalServiceStatus(
+        name=name,
+        provider=provider,
+        capability=capability,
+        api_key_configured=api_key_configured,
+        key_source=key_source,
+        mock_enabled=settings.EXTERNAL_API_MOCK_ENABLED,
+        mode=_resolve_external_mode(api_key_configured),
+    )
+
+
+def _resolve_external_mode(api_key_configured: bool) -> str:
+    """根据Key和mock配置判断外部服务模式"""
+    if api_key_configured:
+        return "real_api"
+    if settings.EXTERNAL_API_MOCK_ENABLED:
+        return "mock_fallback"
+    return "unavailable"
+
+
+def _weather_key_source() -> str | None:
+    """天气服务Key来源，不返回真实Key"""
+    if settings.WEATHER_API_KEY:
+        return "WEATHER_API_KEY"
+    if settings.AMAP_API_KEY:
+        return "AMAP_API_KEY"
+    return None
 
 
 @app.websocket("/ws/chat")

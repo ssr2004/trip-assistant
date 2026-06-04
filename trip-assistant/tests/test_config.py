@@ -12,7 +12,7 @@ def test_settings_use_pydantic_v2_model_config():
 
 def test_settings_defaults_are_project_aligned():
     """默认配置与当前项目命名和本地数据目录保持一致"""
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.APP_NAME == "TravelMind"
     assert settings.APP_ENV == "development"
