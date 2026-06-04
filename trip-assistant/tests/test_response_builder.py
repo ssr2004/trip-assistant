@@ -200,6 +200,39 @@ def test_build_policy_response():
     assert "flight_policy.md" in response
 
 
+def test_build_weather_response():
+    """天气查询输出天气预报和旅行建议"""
+    builder = ResponseBuilder()
+    response = builder.build(
+        intent={"intent": "weather_query"},
+        task_results=[
+            {
+                "task": {"task_type": "tool_call", "tool": "get_weather_forecast", "name": "查询天气预报"},
+                "success": True,
+                "result": {
+                    "success": True,
+                    "data": {
+                        "city": "杭州",
+                        "forecasts": [
+                            {"date": "2026-06-10", "weather": "小雨", "temperature": "22-27℃", "wind": "东北风3级"}
+                        ],
+                        "travel_advice": ["2026-06-10 小雨，建议携带雨具，减少长时间户外景点。"],
+                    },
+                    "error": None,
+                    "metadata": {"tool": "get_weather_forecast"},
+                },
+                "error": None,
+            }
+        ],
+    )
+
+    assert "杭州未来1天天气" in response
+    assert "小雨" in response
+    assert "22-27℃" in response
+    assert "减少长时间户外景点" in response
+
+
+
 def test_build_itinerary_revision_response():
     """行程调整输出修订后的每日安排"""
     builder = ResponseBuilder()
@@ -220,6 +253,11 @@ def test_build_itinerary_revision_response():
                         "total_distance": 6200,
                         "total_duration": 1800,
                     },
+                    "weather_summary": {
+                        "adjusted_days": [
+                            {"day": 1, "weather": "小雨", "temperature": "22-27℃", "advice": "不适合长时间户外活动，已优先调整为室内或低强度安排。"}
+                        ]
+                    },
                     "sources": ["上一轮旅行方案", "会话动态景点数据"],
                 },
                 "error": None,
@@ -234,6 +272,8 @@ def test_build_itinerary_revision_response():
     assert "路线优化摘要" in response
     assert "西湖 → 灵隐寺" in response
     assert "6.2公里" in response
+    assert "天气调整依据" in response
+    assert "小雨" in response
     assert "资料依据" in response
 
 

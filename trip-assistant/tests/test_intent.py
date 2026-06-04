@@ -51,6 +51,29 @@ def test_parse_attraction_search():
     assert result["entities"]["destination"] == "杭州"
 
 
+def test_parse_weather_query():
+    """解析天气查询需求"""
+    parser = IntentParser()
+
+    result = parser.parse("杭州明天天气怎么样？")
+
+    assert result["intent"] == "weather_query"
+    assert result["entities"]["destination"] == "杭州"
+    assert result["missing_slots"] == []
+
+
+
+def test_parse_rainy_itinerary_revision():
+    """解析雨天行程调整需求"""
+    parser = IntentParser()
+
+    result = parser.parse("如果下雨怎么办？")
+
+    assert result["intent"] == "itinerary_revision"
+    assert result["missing_slots"] == []
+
+
+
 def test_parse_itinerary_revision_move_attraction():
     """解析行程调整中的景点移动请求"""
     parser = IntentParser()

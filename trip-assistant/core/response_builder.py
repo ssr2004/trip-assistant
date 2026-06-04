@@ -43,6 +43,8 @@ class ResponseBuilder:
             return self._format_dynamic_knowledge_response(task_results)
         if intent_type == "itinerary_revision":
             return self._format_itinerary_revision_response(task_results)
+        if intent_type == "weather_query":
+            return self._format_weather_response(task_results)
         if intent_type == "flight_search":
             return self._format_single_tool_response("航班推荐", task_results, "search_flights")
         if intent_type == "hotel_search":
@@ -210,6 +212,10 @@ class ResponseBuilder:
         if route_summary:
             lines.extend(self._format_route_summary(route_summary))
 
+        weather_summary = data.get("weather_summary")
+        if weather_summary:
+            lines.extend(self._format_weather_adjustment_summary(weather_summary))
+
         sources = data.get("sources") or []
         if sources:
             lines.append("资料依据：")
@@ -228,6 +234,40 @@ class ResponseBuilder:
         total_duration = self._format_duration(route_summary.get("total_duration", 0))
         lines.append(f"- 总距离：约{total_distance}，预计用时约{total_duration}")
         return lines
+
+    def _format_weather_adjustment_summary(self, weather_summary: Dict) -> List[str]:
+        """格式化天气感知行程调整摘要"""
+        lines = ["", "天气调整依据："]
+        adjusted_days = weather_summary.get("adjusted_days") or []
+        if adjusted_days:
+            for item in adjusted_days[:5]:
+                lines.append(
+                    f"- 第{item.get('day')}天：{item.get('weather')}，{item.get('temperature', '温度待定')}，{item.get('advice')}"
+                )
+            lines.append("- 已将部分户外安排替换为室内或低强度活动。")
+        else:
+            lines.append("- 当前天气整体适合户外游览，暂不需要大幅调整。")
+        return lines
+
+    def _format_weather_response(self, task_results: List[Dict]) -> str:
+        """格式化天气查询回复"""
+        result = self._find_result_by_tool(task_results, "get_weather_forecast")
+        data = self._result_data(result) if result else {}
+        if not data:
+            return "天气查询暂未成功，请补充城市或稍后再试。"
+
+        city = data.get("city") or "目的地"
+        forecasts = data.get("forecasts") or []
+        advice = data.get("travel_advice") or []
+        lines = [f"{city}未来{len(forecasts)}天天气："]
+        for index, forecast in enumerate(forecasts, start=1):
+            lines.append(
+                f"{index}. {forecast.get('date', '日期待定')}：{forecast.get('weather', '天气待定')}，"
+                f"{forecast.get('temperature', '温度待定')}，{forecast.get('wind', '风力待定')}。"
+            )
+            if index <= len(advice):
+                lines.append(f"   建议：{advice[index - 1]}")
+        return "\n".join(lines)
 
     def _format_single_tool_response(self, title: str, task_results: List[Dict], tool_name: str) -> str:
         """格式化单工具查询回复"""

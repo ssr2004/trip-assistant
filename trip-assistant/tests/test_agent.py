@@ -112,6 +112,27 @@ async def test_agent_optimizes_itinerary_route_order(agent):
 
 
 @pytest.mark.asyncio
+async def test_agent_queries_weather(agent):
+    """Agent可以查询城市天气预报"""
+    response = await agent.arun("杭州明天天气怎么样？", "test-session-weather-query")
+
+    assert "杭州未来" in response
+    assert "小雨" in response
+
+
+@pytest.mark.asyncio
+async def test_agent_adjusts_itinerary_for_rain(agent):
+    """Agent可以根据雨天天气调整历史行程"""
+    session_id = "test-session-weather-adjust"
+
+    await agent.arun("我要从郑州去杭州玩三天，预算3000，6月10日出发", session_id)
+    response = await agent.arun("如果下雨怎么办？", session_id)
+
+    assert "已根据您的要求调整行程" in response
+    assert "天气调整依据" in response
+
+
+@pytest.mark.asyncio
 async def test_agent_revise_itinerary_without_history(agent):
     """没有历史行程时行程调整给出合理提示"""
     response = await agent.arun("把西湖安排到第一天", "test-session-itinerary-revision-empty")

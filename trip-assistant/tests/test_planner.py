@@ -100,6 +100,25 @@ def test_plan_policy_query():
     assert tasks[0]["params"]["query"] == "机票能退吗"
 
 
+def test_plan_weather_query():
+    """天气查询生成天气工具任务"""
+    planner = TaskPlanner()
+    intent = {
+        "intent": "weather_query",
+        "entities": {"destination": "杭州", "duration": None},
+        "missing_slots": [],
+    }
+
+    tasks = planner.plan(intent, {"query": "杭州明天天气怎么样？"})
+
+    assert len(tasks) == 1
+    assert tasks[0]["task_type"] == "tool_call"
+    assert tasks[0]["tool"] == "get_weather_forecast"
+    assert tasks[0]["params"]["city"] == "杭州"
+    assert tasks[0]["params"]["days"] == 3
+
+
+
 def test_plan_itinerary_revision():
     """行程调整生成内部修订任务"""
     planner = TaskPlanner()
