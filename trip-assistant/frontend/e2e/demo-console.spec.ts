@@ -30,7 +30,10 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
   await expect(page.getByText("每日行程").first()).toBeVisible();
   await expect(page.getByText("景点推荐").first()).toBeVisible();
   await expect(page.getByText("Execution Trace").first()).toBeVisible();
-  await expect(page.getByText("LLM 1 calls").first()).toBeVisible();
+  await expect(page.getByText("LLM 2 calls").first()).toBeVisible();
+  await expect(page.getByText("1 repairs").first()).toBeVisible();
+  await expect(page.getByText("1 real API").first()).toBeVisible();
+  await expect(page.getByText("0 mock").first()).toBeVisible();
   await expect(page.getByText("Tool · 搜索景点")).toBeVisible();
 
   await page.getByRole("button", { name: /2 雨天调整/ }).click();
@@ -216,8 +219,9 @@ function itineraryArtifact(title: string) {
 }
 
 function trace(intent: string, taskSteps: Array<Record<string, unknown>>) {
+  const hasRepair = intent === "travel_plan";
   const steps = [
-    { stage: "intent", label: intent, status: "success", detail: "confidence=0.91" },
+    { stage: "intent", label: intent, status: "success", detail: hasRepair ? "confidence=0.91, json_repair=success" : "confidence=0.91" },
     { stage: "context", label: "RAG context", status: "success", detail: "static_sources=3", source_count: 3 },
     { stage: "planning", label: "Task plan", status: "success", detail: `tasks=${taskSteps.length}` },
     ...taskSteps.map((step, index) => ({
@@ -237,12 +241,12 @@ function trace(intent: string, taskSteps: Array<Record<string, unknown>>) {
       failed_count: 0,
       source_count: 3,
       total_duration_ms: 26,
-      llm_call_count: 1,
-      llm_success_count: 1,
+      llm_call_count: hasRepair ? 2 : 1,
+      llm_success_count: hasRepair ? 2 : 1,
       llm_failure_count: 0,
       llm_fallback_count: 0,
-      llm_repair_count: 0,
-      llm_repair_success_count: 0,
+      llm_repair_count: hasRepair ? 1 : 0,
+      llm_repair_success_count: hasRepair ? 1 : 0,
       llm_duration_ms: 42,
       llm_prompt_tokens: 128,
       llm_completion_tokens: 64,
