@@ -34,6 +34,7 @@ function modeLabel(mode?: string | null): string {
     local_data: "Local",
     internal_rule: "Rule",
     internal_revision: "Revision",
+    rule_fallback: "Rule Fallback",
     dynamic_rag: "Dynamic RAG",
     template: "Template",
     llm: "LLM",

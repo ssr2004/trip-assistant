@@ -1006,13 +1006,19 @@ class TravelAgent:
 
         steps: List[Dict[str, Any]] = []
         intent_type = intent.get("intent") or "general_chat"
+        intent_metadata = intent.get("metadata", {}) if isinstance(intent.get("metadata"), dict) else {}
+        intent_source = intent_metadata.get("source") or "rule"
         confidence = intent.get("confidence")
         intent_detail = f"confidence={confidence:.2f}" if isinstance(confidence, (int, float)) else None
+        if intent_metadata.get("llm_error_type"):
+            intent_detail = f"{intent_detail or ''}, llm_error={intent_metadata.get('llm_error_type')}".lstrip(", ")
         steps.append({
             "stage": "intent",
             "label": intent_type,
             "status": "success",
             "detail": intent_detail,
+            "execution_mode": self._intent_execution_mode(intent_source),
+            "error_type": intent_metadata.get("llm_error_type"),
         })
         steps.append({
             "stage": "context",
@@ -1064,6 +1070,9 @@ class TravelAgent:
 
         summary = {
             "intent": intent_type,
+            "intent_source": intent_source,
+            "llm_mode": "real_llm" if self.intent_parser.llm_client.available else "rule_fallback",
+            "llm_model": self.intent_parser.llm_client.settings.LLM_MODEL,
             "task_count": len(tasks),
             "tool_count": sum(1 for task in tasks if task.get("tool")),
             "failed_count": sum(1 for result in task_results if not result.get("success")),
@@ -1074,6 +1083,14 @@ class TravelAgent:
             ),
         }
         return normalize_execution_trace({"steps": steps, "summary": summary})
+
+    def _intent_execution_mode(self, source: str) -> str:
+        """Map intent metadata source to trace execution mode."""
+        if source == "llm":
+            return "llm"
+        if source == "rule_fallback":
+            return "rule_fallback"
+        return "internal_rule"
 
     def _summarize_trace_result(self, task_result: Dict[str, Any], data: Any) -> str | None:
         """Summarize task output without exposing raw payloads or sensitive values."""

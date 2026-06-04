@@ -79,7 +79,9 @@ class IntentParser:
             missing_slots=missing_slots,
             followup_question=followup_question,
         )
-        return parsed.model_dump()
+        result = parsed.model_dump()
+        result["metadata"] = {"source": "rule"}
+        return result
 
     async def parse_async(self, user_input: str) -> Dict:
         """
@@ -373,18 +375,39 @@ class IntentParser:
         )
         response = await self.llm_client.chat(request)
         if not response.success:
+            rule_result["metadata"] = {
+                "source": "rule_fallback",
+                "llm_error_type": response.metadata.get("error_type"),
+                "llm_model": response.metadata.get("model"),
+            }
             return None
 
         parsed_json = self._parse_llm_json(response.content)
         if not parsed_json:
+            rule_result["metadata"] = {
+                "source": "rule_fallback",
+                "llm_error_type": "json_parse_failed",
+                "llm_model": response.metadata.get("model"),
+            }
             return None
 
         try:
             validated = TravelIntent.model_validate(parsed_json)
         except Exception:
+            rule_result["metadata"] = {
+                "source": "rule_fallback",
+                "llm_error_type": "schema_validation_failed",
+                "llm_model": response.metadata.get("model"),
+            }
             return None
 
-        return self._normalize_llm_intent(validated)
+        result = self._normalize_llm_intent(validated)
+        result["metadata"] = {
+            "source": "llm",
+            "llm_model": response.metadata.get("model"),
+            "provider": response.metadata.get("provider"),
+        }
+        return result
 
     def _parse_llm_json(self, content: str) -> Optional[Dict]:
         """解析LLM返回的JSON，兼容Markdown代码块"""

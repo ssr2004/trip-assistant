@@ -49,6 +49,7 @@ async def test_parse_async_skips_llm_for_high_confidence_rule_result():
     result = await parser.parse_async("我要从郑州去杭州玩三天，预算3000，6月10日出发")
 
     assert result["intent"] == "travel_plan"
+    assert result["metadata"]["source"] == "rule"
     assert result["entities"]["origin"] == "郑州"
     assert result["entities"]["destination"] == "杭州"
     assert result["entities"]["duration"] == 3
@@ -86,6 +87,7 @@ async def test_parse_async_uses_llm_for_general_chat_travel_need():
     assert result["entities"]["budget"] == 3000
     assert "海边" in result["entities"]["preferences"]
     assert "destination" in result["missing_slots"]
+    assert result["metadata"]["source"] == "llm"
     assert llm_client.calls == 1
     assert llm_client.last_request.response_format == "json_object"
 
@@ -129,6 +131,22 @@ async def test_parse_async_falls_back_when_llm_returns_invalid_json():
     result = await parser.parse_async("我想找个地方散散心")
 
     assert result["intent"] == "general_chat"
+    assert result["metadata"]["source"] == "rule_fallback"
+    assert result["metadata"]["llm_error_type"] == "json_parse_failed"
+    assert llm_client.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_parse_async_records_llm_error_type_when_call_fails():
+    """LLM调用失败时记录错误分类并回退规则结果"""
+    llm_client = FakeLLMClient(success=False)
+    parser = IntentParser(llm_client=llm_client)
+
+    result = await parser.parse_async("我想找个地方散散心")
+
+    assert result["intent"] == "general_chat"
+    assert result["metadata"]["source"] == "rule_fallback"
+    assert result["metadata"]["llm_error_type"] is None
     assert llm_client.calls == 1
 
 
@@ -141,4 +159,6 @@ async def test_parse_async_falls_back_when_llm_schema_invalid():
     result = await parser.parse_async("我想找个地方散散心")
 
     assert result["intent"] == "general_chat"
+    assert result["metadata"]["source"] == "rule_fallback"
+    assert result["metadata"]["llm_error_type"] == "schema_validation_failed"
     assert llm_client.calls == 1

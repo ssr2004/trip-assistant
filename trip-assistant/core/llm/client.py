@@ -51,7 +51,7 @@ class LLMClient:
                 success=False,
                 content="",
                 error="LLM_API_KEY未配置，已使用规则逻辑降级。",
-                metadata=metadata,
+                metadata={**metadata, "error_type": "missing_api_key"},
             )
 
         if not request.messages:
@@ -59,7 +59,7 @@ class LLMClient:
                 success=False,
                 content="",
                 error="LLM请求缺少messages。",
-                metadata=self._build_metadata(model=model),
+                metadata={**self._build_metadata(model=model), "error_type": "invalid_request"},
             )
 
         try:
@@ -81,6 +81,7 @@ class LLMClient:
                 metadata={
                     **self._build_metadata(model=model),
                     "response_format": request.response_format,
+                    "execution_mode": "llm",
                 },
             )
         except Exception as exc:  # pragma: no cover - 具体异常类型由SDK决定
@@ -88,7 +89,10 @@ class LLMClient:
                 success=False,
                 content="",
                 error=self._sanitize_error(exc),
-                metadata=self._build_metadata(model=model),
+                metadata={
+                    **self._build_metadata(model=model),
+                    "error_type": self._classify_error(exc),
+                },
             )
 
     def _build_client(self) -> Optional[AsyncOpenAI]:
@@ -107,6 +111,7 @@ class LLMClient:
             "model": model,
             "base_url": self.settings.LLM_BASE_URL,
             "fallback": fallback,
+            "execution_mode": "rule_fallback" if fallback else "llm",
         }
 
     def _sanitize_error(self, exc: Exception) -> str:
@@ -116,3 +121,19 @@ class LLMClient:
         if api_key:
             message = message.replace(api_key, "***")
         return message or "LLM调用失败。"
+
+    def _classify_error(self, exc: Exception) -> str:
+        """将SDK异常归类为稳定错误类型，供日志和Trace展示。"""
+        name = exc.__class__.__name__.lower()
+        message = str(exc).lower()
+        if "timeout" in name or "timeout" in message or "timed out" in message:
+            return "timeout"
+        if "ratelimit" in name or "rate_limit" in name or "rate limit" in message or "429" in message:
+            return "rate_limit"
+        if "authentication" in name or "permission" in name or "unauthorized" in message or "401" in message:
+            return "authentication"
+        if "connection" in name or "connect" in message or "network" in message:
+            return "connection"
+        if "badrequest" in name or "invalid" in message or "400" in message:
+            return "invalid_request"
+        return "provider_error"

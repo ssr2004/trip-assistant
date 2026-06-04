@@ -106,6 +106,7 @@ def test_frontend_renders_execution_trace_timeline():
     assert "step.duration_ms" in trace_vue
     assert "step.execution_mode" in trace_vue
     assert "step.error_type" in trace_vue
+    assert "Rule Fallback" in trace_vue
     assert "data.execution_trace" in app_vue
 
 

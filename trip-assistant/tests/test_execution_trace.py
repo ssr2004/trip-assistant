@@ -26,8 +26,13 @@ async def test_agent_returns_sanitized_execution_trace_for_tool_call():
 
     trace = result["execution_trace"]
     assert trace["summary"]["intent"] == "weather_query"
+    assert trace["summary"]["intent_source"] == "rule"
+    assert trace["summary"]["llm_mode"] in {"real_llm", "rule_fallback"}
+    assert trace["summary"]["llm_model"]
     assert trace["summary"]["task_count"] >= 1
     assert any(step["stage"] == "intent" for step in trace["steps"])
+    intent_step = next(step for step in trace["steps"] if step["stage"] == "intent")
+    assert intent_step["execution_mode"] == "internal_rule"
     weather_step = next(step for step in trace["steps"] if step.get("tool") == "get_weather_forecast")
     assert isinstance(weather_step["duration_ms"], int)
     assert weather_step["duration_ms"] >= 0

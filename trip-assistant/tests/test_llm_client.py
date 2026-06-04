@@ -75,6 +75,25 @@ class FakeFailingOpenAIClient:
     chat = FakeFailingChat()
 
 
+class FakeRateLimitCompletions:
+    """模拟限流错误"""
+
+    async def create(self, **kwargs):
+        raise RuntimeError("HTTP 429 rate limit exceeded")
+
+
+class FakeRateLimitChat:
+    """模拟限流chat对象"""
+
+    completions = FakeRateLimitCompletions()
+
+
+class FakeRateLimitOpenAIClient:
+    """模拟限流OpenAI客户端"""
+
+    chat = FakeRateLimitChat()
+
+
 def test_llm_client_unavailable_without_api_key():
     """没有API Key时客户端不可用并返回降级结果"""
     settings = Settings(LLM_API_KEY="", LLM_BASE_URL="https://api.deepseek.com/v1")
@@ -97,6 +116,8 @@ async def test_llm_client_chat_fallback_without_api_key():
     assert "LLM_API_KEY未配置" in response.error
     assert response.metadata["fallback"] is True
     assert response.metadata["provider"] == "deepseek"
+    assert response.metadata["execution_mode"] == "rule_fallback"
+    assert response.metadata["error_type"] == "missing_api_key"
 
 
 @pytest.mark.asyncio
@@ -126,6 +147,7 @@ async def test_llm_client_chat_with_mock_openai_client():
     assert response.content == "这是LLM返回内容"
     assert response.metadata["model"] == "deepseek-chat"
     assert response.metadata["response_format"] == "json_object"
+    assert response.metadata["execution_mode"] == "llm"
 
     kwargs = fake_client.chat.completions.kwargs
     assert kwargs["model"] == "deepseek-chat"
@@ -148,6 +170,23 @@ async def test_llm_client_sanitizes_api_key_from_errors():
     assert response.success is False
     assert "sk-test-secret" not in response.error
     assert "***" in response.error
+    assert response.metadata["error_type"] == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_llm_client_classifies_rate_limit_errors():
+    """LLM调用失败时提供稳定错误分类"""
+    settings = Settings(
+        LLM_API_KEY="sk-test-secret",
+        LLM_BASE_URL="https://api.deepseek.com",
+    )
+    client = LLMClient(settings=settings, openai_client=FakeRateLimitOpenAIClient())
+
+    response = await client.chat(LLMRequest(messages=[LLMMessage(role="user", content="你好")]))
+
+    assert response.success is False
+    assert response.metadata["error_type"] == "rate_limit"
+    assert "sk-test-secret" not in response.error
 
 
 def test_default_llm_settings_are_deepseek_compatible():
