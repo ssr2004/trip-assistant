@@ -2,7 +2,7 @@
 智能任务规划器
 根据结构化意图、实体和缺失槽位生成可执行任务计划
 """
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import json
 
 from core.llm import LLMClient, LLMMessage, LLMRequest
@@ -25,7 +25,13 @@ class TaskPlanner:
         "get_weather_forecast",
     }
 
-    def __init__(self, llm_client: Optional[LLMClient] = None, llm_planner_enabled: bool = False):
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        llm_planner_enabled: Optional[bool] = None,
+        llm_planner_mode: Optional[str] = None,
+        llm_planner_complexity_threshold: int = 3,
+    ):
         """
         初始化规划器
 
@@ -34,7 +40,11 @@ class TaskPlanner:
             llm_planner_enabled: 是否启用LLM规划fallback
         """
         self.llm_client = llm_client or LLMClient()
-        self.llm_planner_enabled = llm_planner_enabled
+        if llm_planner_mode is None:
+            llm_planner_mode = "off" if llm_planner_enabled is False else "auto"
+        self.llm_planner_mode = self._normalize_planner_mode(llm_planner_mode)
+        self.llm_planner_enabled = self.llm_planner_mode != "off"
+        self.llm_planner_complexity_threshold = max(int(llm_planner_complexity_threshold or 1), 1)
         self.last_plan_metadata: Dict = self._base_plan_metadata()
 
     def plan(self, intent: Dict, context: Dict) -> List[Dict]:
@@ -53,8 +63,10 @@ class TaskPlanner:
             return []
 
         plan = self._template_plan(intent, context)
+        route_metadata = self._llm_plan_route(intent, context, plan)
         self.last_plan_metadata = {
             **self._base_plan_metadata(),
+            **route_metadata,
             "planner_mode": "template",
             "llm_planner_attempted": False,
             "llm_planner_adopted": False,
@@ -80,9 +92,11 @@ class TaskPlanner:
 
         template_plan = self._template_plan(intent, context)
         skip_reason = self._llm_plan_skip_reason(intent, context, template_plan)
+        route_metadata = self._llm_plan_route(intent, context, template_plan)
         if skip_reason:
             self.last_plan_metadata = {
                 **self._base_plan_metadata(),
+                **route_metadata,
                 "planner_mode": "template",
                 "llm_planner_attempted": False,
                 "llm_planner_adopted": False,
@@ -475,32 +489,95 @@ class TaskPlanner:
 
     def _llm_plan_skip_reason(self, intent: Dict, context: Dict, template_plan: TaskPlan) -> Optional[str]:
         """Return why LLM planning should be skipped, or None when it should run."""
-        if not self.llm_planner_enabled:
-            return "disabled"
-        if not self.llm_client.available:
-            return "llm_unavailable"
-        if template_plan.need_user_input:
-            return "need_user_input"
+        return self._llm_plan_route(intent, context, template_plan).get("skip_reason")
 
+    def _llm_plan_route(self, intent: Dict, context: Dict, template_plan: TaskPlan) -> Dict[str, Any]:
+        """Return sanitized auto-routing metadata for LLM task planning."""
+        signals = self._planning_complexity_signals(intent, context)
+        score = len(signals)
+        metadata: Dict[str, Any] = {
+            "planner_mode_config": self.llm_planner_mode,
+            "llm_planner_enabled": self.llm_planner_enabled,
+            "llm_planner_available": bool(self.llm_client.available),
+            "llm_planner_auto_route": self.llm_planner_mode == "auto",
+            "llm_planner_complexity_score": score,
+            "llm_planner_complexity_threshold": self.llm_planner_complexity_threshold,
+            "llm_planner_complexity_signals": signals,
+            "llm_planner_route_decision": "skip",
+            "skip_reason": None,
+        }
+        if self.llm_planner_mode == "off":
+            return {**metadata, "skip_reason": "mode_off"}
+        if not self.llm_client.available:
+            return {**metadata, "skip_reason": "llm_unavailable"}
+        if template_plan.need_user_input:
+            return {**metadata, "skip_reason": "need_user_input"}
+        if intent.get("intent") not in {"travel_plan", "itinerary_revision"}:
+            return {**metadata, "skip_reason": "unsupported_intent"}
+        if self.llm_planner_mode == "always":
+            return {**metadata, "llm_planner_route_decision": "attempt_llm"}
+        if score < self.llm_planner_complexity_threshold:
+            return {**metadata, "skip_reason": "not_complex_enough"}
+        return {**metadata, "llm_planner_route_decision": "attempt_llm"}
+
+    def _planning_complexity_signals(self, intent: Dict, context: Dict) -> List[str]:
+        """Detect product-level complexity signals without exposing planner modes to users."""
         query = context.get("query", "") or ""
         entities = intent.get("entities", {}) or {}
         preferences = entities.get("preferences", []) or []
         confidence = intent.get("confidence", 1.0)
-        complex_keywords = ["顺便", "同时", "不要太累", "别太累", "如果可以", "帮我权衡", "兼顾", "路线", "天气"]
-        should_run = (
-            len(query) >= 40
-            or any(keyword in query for keyword in complex_keywords)
-            or len(preferences) >= 3
-            or confidence < 0.65
-        )
-        return None if should_run else "not_complex_enough"
+        keyword_groups = {
+            "multi_objective": ["同时", "兼顾", "既要", "又要", "平衡", "权衡"],
+            "pace_constraint": ["不要太累", "别太累", "轻松", "慢节奏", "老人", "孩子", "亲子"],
+            "route_constraint": ["路线", "顺路", "少走路", "地铁", "交通", "距离"],
+            "weather_contingency": ["天气", "下雨", "雨天", "备选", "如果"],
+            "budget_constraint": ["预算", "人均", "费用", "价格", "以内", "控制"],
+            "accommodation_constraint": ["住宿", "酒店", "民宿", "附近", "商圈"],
+        }
+        signals: List[str] = []
+        if len(query.strip()) >= 36:
+            signals.append("long_query")
+        if len(preferences) >= 3:
+            signals.append("multiple_preferences")
+        if entities.get("budget"):
+            signals.append("budget_entity")
+        if entities.get("travelers"):
+            signals.append("traveler_entity")
+        if isinstance(confidence, (int, float)) and confidence < 0.65:
+            signals.append("low_confidence")
+        for signal, keywords in keyword_groups.items():
+            if any(keyword in query for keyword in keywords):
+                signals.append(signal)
+        return signals
+
+    def _normalize_planner_mode(self, mode: str) -> str:
+        """Normalize external config into an internal routing mode."""
+        normalized = (mode or "auto").strip().lower()
+        aliases = {
+            "enabled": "auto",
+            "true": "auto",
+            "on": "auto",
+            "disabled": "off",
+            "false": "off",
+            "manual": "always",
+        }
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in {"auto", "off", "always"}:
+            return "auto"
+        return normalized
 
     def _base_plan_metadata(self) -> Dict:
         """Build default sanitized planner metadata for trace observability."""
         return {
             "planner_mode": "template",
+            "planner_mode_config": self.llm_planner_mode,
             "llm_planner_enabled": bool(self.llm_planner_enabled),
             "llm_planner_available": bool(self.llm_client.available),
+            "llm_planner_auto_route": self.llm_planner_mode == "auto",
+            "llm_planner_complexity_score": 0,
+            "llm_planner_complexity_threshold": self.llm_planner_complexity_threshold,
+            "llm_planner_complexity_signals": [],
+            "llm_planner_route_decision": "skip",
             "llm_planner_attempted": False,
             "llm_planner_adopted": False,
         }
@@ -509,6 +586,7 @@ class TaskPlanner:
         """调用LLM生成任务计划，失败时返回None"""
         self.last_plan_metadata = {
             **self._base_plan_metadata(),
+            **self._llm_plan_route(intent, context, template_plan),
             "planner_mode": "template",
             "llm_planner_attempted": True,
             "llm_planner_adopted": False,

@@ -104,7 +104,8 @@ def test_frontend_renders_execution_trace_timeline():
     assert "trace.summary.task_count" in trace_vue
     assert "trace.summary.total_duration_ms" in trace_vue
     assert "Runtime Metrics" in trace_vue
-    assert "trace.summary.planner_mode" in trace_vue
+    assert "plannerLabel(trace.summary)" in trace_vue
+    assert "trace.summary.llm_planner_complexity_score" in trace_vue
     assert "trace.summary.llm_call_count" in trace_vue
     assert "trace.summary.tool_total_duration_ms" in trace_vue
     assert "trace.summary.real_api_count" in trace_vue

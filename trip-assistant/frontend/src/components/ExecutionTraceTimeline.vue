@@ -53,6 +53,12 @@ function formatDuration(duration?: number | null): string {
 function summaryNumber(value: unknown): number {
   return typeof value === "number" ? value : 0;
 }
+
+function plannerLabel(summary: ExecutionTrace["summary"]): string {
+  const mode = summary.planner_mode || "template";
+  const config = summary.planner_mode_config || "auto";
+  return `${config} -> ${mode}`;
+}
 </script>
 
 <template>
@@ -70,7 +76,8 @@ function summaryNumber(value: unknown): number {
     </div>
 
     <div class="runtime-summary" aria-label="Runtime Metrics">
-      <span>Planner {{ trace.summary.planner_mode || "template" }}</span>
+      <span>Planner {{ plannerLabel(trace.summary) }}</span>
+      <span>Plan score {{ summaryNumber(trace.summary.llm_planner_complexity_score) }}</span>
       <span>LLM {{ summaryNumber(trace.summary.llm_call_count) }} calls</span>
       <span>{{ summaryNumber(trace.summary.llm_duration_ms) }}ms LLM</span>
       <span>{{ summaryNumber(trace.summary.llm_total_tokens) }} tokens</span>

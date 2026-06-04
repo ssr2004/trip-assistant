@@ -22,7 +22,7 @@ class TraceStep(BaseModel):
 
 class ExecutionTrace(BaseModel):
     steps: list[TraceStep] = Field(default_factory=list)
-    summary: dict[str, int | str | bool] = Field(default_factory=dict)
+    summary: dict[str, int | str | bool | list[str]] = Field(default_factory=dict)
 
 
 def normalize_execution_trace(value: Any) -> dict[str, Any]:

@@ -127,6 +127,11 @@ export interface ExecutionTrace {
     source_count?: number;
     total_duration_ms?: number;
     planner_mode?: string;
+    planner_mode_config?: string;
+    llm_planner_auto_route?: boolean;
+    llm_planner_complexity_score?: number;
+    llm_planner_complexity_signals?: string[];
+    llm_planner_route_decision?: string;
     llm_planner_enabled?: boolean;
     llm_planner_available?: boolean;
     llm_planner_attempted?: boolean;
@@ -152,7 +157,7 @@ export interface ExecutionTrace {
     template_task_count?: number;
     dynamic_rag_count?: number;
     internal_task_count?: number;
-    [key: string]: number | string | boolean | undefined;
+    [key: string]: number | string | boolean | string[] | undefined;
   };
 }
 

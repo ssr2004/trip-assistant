@@ -31,7 +31,10 @@ class TravelAgent:
         """初始化Agent"""
         self.settings = get_settings()
         self.intent_parser = IntentParser()
-        self.task_planner = TaskPlanner(llm_planner_enabled=self.settings.LLM_PLANNER_ENABLED)
+        self.task_planner = TaskPlanner(
+            llm_planner_mode=self.settings.LLM_PLANNER_MODE,
+            llm_planner_complexity_threshold=self.settings.LLM_PLANNER_COMPLEXITY_THRESHOLD,
+        )
         self.memory_manager = MemoryManager()
         self.rag_retriever = RAGRetriever()
         self.dynamic_rag_store = DynamicRAGStore()
@@ -1084,6 +1087,11 @@ class TravelAgent:
             "json_repair_attempted": bool(intent_metadata.get("json_repair_attempted")),
             "json_repair_success": bool(intent_metadata.get("json_repair_success")),
             "planner_mode": planner_metadata.get("planner_mode") or "template",
+            "planner_mode_config": planner_metadata.get("planner_mode_config") or "auto",
+            "llm_planner_auto_route": bool(planner_metadata.get("llm_planner_auto_route")),
+            "llm_planner_complexity_score": int(planner_metadata.get("llm_planner_complexity_score") or 0),
+            "llm_planner_complexity_signals": planner_metadata.get("llm_planner_complexity_signals") or [],
+            "llm_planner_route_decision": planner_metadata.get("llm_planner_route_decision") or "",
             "llm_planner_enabled": bool(planner_metadata.get("llm_planner_enabled")),
             "llm_planner_available": bool(planner_metadata.get("llm_planner_available")),
             "llm_planner_attempted": bool(planner_metadata.get("llm_planner_attempted")),
@@ -1107,6 +1115,9 @@ class TravelAgent:
         """Build a compact planning trace detail."""
         planner_mode = planner_metadata.get("planner_mode") or "template"
         detail = f"tasks={len(tasks)}, planner={planner_mode}"
+        route_decision = planner_metadata.get("llm_planner_route_decision")
+        if route_decision:
+            detail = f"{detail}, route={route_decision}"
         fallback_reason = planner_metadata.get("fallback_reason") or planner_metadata.get("skip_reason")
         if fallback_reason:
             detail = f"{detail}, reason={fallback_reason}"

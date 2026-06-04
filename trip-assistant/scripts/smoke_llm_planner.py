@@ -1,6 +1,6 @@
-"""Manual smoke test for gated LLM task planning.
+"""Manual smoke test for auto-routed LLM task planning.
 
-Automated tests use --dry-run only. Real LLM planning is opt-in with --enable.
+Automated tests use --dry-run only. Real LLM planning uses --mode auto by default.
 """
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ DEFAULT_QUERY = "我下个月从郑州去杭州三天，预算3000，不要太�
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a sanitized manual smoke test for LLM planner gating.")
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Complex planning query to test.")
-    parser.add_argument("--enable", action="store_true", help="Enable LLM planner for this smoke run.")
+    parser.add_argument("--mode", choices=["auto", "off", "always"], default="auto", help="Internal LLM planner routing mode.")
+    parser.add_argument("--enable", action="store_true", help="Deprecated alias for --mode auto.")
     parser.add_argument("--dry-run", action="store_true", help="Do not call LLM; show template plan and gating state.")
     parser.add_argument("--require-llm-plan", action="store_true", help="Exit non-zero if LLM planner is not adopted.")
     return parser
@@ -35,17 +36,21 @@ async def main() -> int:
     args = build_parser().parse_args()
     intent = _complex_intent()
     context = {"query": args.query}
-    planner = TaskPlanner(llm_planner_enabled=args.enable)
+    planner_mode = "auto" if args.enable else args.mode
+    planner = TaskPlanner(llm_planner_mode=planner_mode)
 
     template_tasks = planner.plan(intent, context)
     template_metadata = planner.last_plan_metadata
     skip_reason = planner._llm_plan_skip_reason(intent, context, planner._template_plan(intent, context))
     result: Dict[str, Any] = {
         "preflight": {
-            "llm_planner_enabled": args.enable,
+            "llm_planner_enabled": planner.llm_planner_enabled,
+            "planner_mode_config": planner.llm_planner_mode,
             "llm_available": planner.llm_client.available,
             "would_try_llm_planner": skip_reason is None,
             "skip_reason": skip_reason,
+            "complexity_score": planner.last_plan_metadata.get("llm_planner_complexity_score", 0),
+            "complexity_signals": planner.last_plan_metadata.get("llm_planner_complexity_signals", []),
             "template_task_count": len(template_tasks),
         },
         "template_plan": _task_summary(template_tasks),
@@ -111,6 +116,12 @@ def _sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
         "llm_planner_prompt_tokens",
         "llm_planner_completion_tokens",
         "llm_planner_total_tokens",
+        "planner_mode_config",
+        "llm_planner_auto_route",
+        "llm_planner_complexity_score",
+        "llm_planner_complexity_threshold",
+        "llm_planner_complexity_signals",
+        "llm_planner_route_decision",
         "fallback_reason",
         "skip_reason",
         "template_task_count",

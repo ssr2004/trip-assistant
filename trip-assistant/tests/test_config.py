@@ -20,3 +20,5 @@ def test_settings_defaults_are_project_aligned():
     assert settings.LLM_PROVIDER == "deepseek"
     assert settings.LLM_MODEL == "deepseek-v4-flash"
     assert settings.LLM_BASE_URL == "https://api.deepseek.com"
+    assert settings.LLM_PLANNER_MODE == "auto"
+    assert settings.LLM_PLANNER_COMPLEXITY_THRESHOLD == 3

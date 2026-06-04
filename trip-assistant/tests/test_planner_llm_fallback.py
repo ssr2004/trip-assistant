@@ -51,10 +51,10 @@ def _complex_context():
 
 
 @pytest.mark.asyncio
-async def test_plan_async_defaults_to_template_without_llm_enabled():
-    """默认不启用LLM规划，直接使用模板规划"""
+async def test_plan_async_can_force_template_with_mode_off():
+    """Planner mode off forces template planning even for complex requests."""
     llm_client = FakeLLMClient(available=True)
-    planner = TaskPlanner(llm_client=llm_client)
+    planner = TaskPlanner(llm_client=llm_client, llm_planner_mode="off")
 
     tasks = await planner.plan_async(_complex_intent(), _complex_context())
 
@@ -64,7 +64,34 @@ async def test_plan_async_defaults_to_template_without_llm_enabled():
     assert planner.last_plan_metadata["planner_mode"] == "template"
     assert planner.last_plan_metadata["llm_planner_enabled"] is False
     assert planner.last_plan_metadata["llm_planner_attempted"] is False
-    assert planner.last_plan_metadata["skip_reason"] == "disabled"
+    assert planner.last_plan_metadata["skip_reason"] == "mode_off"
+
+
+@pytest.mark.asyncio
+async def test_plan_async_auto_routes_simple_request_to_template():
+    """Simple high-confidence requests stay on the stable template planner."""
+    llm_client = FakeLLMClient(available=True)
+    planner = TaskPlanner(llm_client=llm_client)
+    intent = {
+        "intent": "travel_plan",
+        "entities": {
+            "origin": "郑州",
+            "destination": "杭州",
+            "duration": 3,
+            "preferences": [],
+        },
+        "missing_slots": [],
+        "confidence": 0.9,
+    }
+
+    tasks = await planner.plan_async(intent, {"query": "郑州去杭州三天"})
+
+    assert len(tasks) == 5
+    assert llm_client.calls == 0
+    assert planner.last_plan_metadata["planner_mode_config"] == "auto"
+    assert planner.last_plan_metadata["llm_planner_enabled"] is True
+    assert planner.last_plan_metadata["llm_planner_attempted"] is False
+    assert planner.last_plan_metadata["skip_reason"] == "not_complex_enough"
 
 
 @pytest.mark.asyncio
@@ -123,6 +150,10 @@ async def test_plan_async_uses_valid_llm_plan_for_complex_request():
     assert llm_client.calls == 1
     assert llm_client.last_request.response_format == "json_object"
     assert planner.last_plan_metadata["planner_mode"] == "llm"
+    assert planner.last_plan_metadata["planner_mode_config"] == "auto"
+    assert planner.last_plan_metadata["llm_planner_route_decision"] == "attempt_llm"
+    assert planner.last_plan_metadata["llm_planner_complexity_score"] >= 3
+    assert "multiple_preferences" in planner.last_plan_metadata["llm_planner_complexity_signals"]
     assert planner.last_plan_metadata["llm_planner_attempted"] is True
     assert planner.last_plan_metadata["llm_planner_adopted"] is True
     assert planner.last_plan_metadata["llm_task_count"] == 2

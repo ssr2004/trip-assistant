@@ -159,6 +159,11 @@ def test_execution_trace_includes_llm_planner_metadata():
         "rag_context": [],
         "planner_metadata": {
             "planner_mode": "llm",
+            "planner_mode_config": "auto",
+            "llm_planner_auto_route": True,
+            "llm_planner_complexity_score": 6,
+            "llm_planner_complexity_signals": ["long_query", "multiple_preferences"],
+            "llm_planner_route_decision": "attempt_llm",
             "llm_planner_enabled": True,
             "llm_planner_available": True,
             "llm_planner_attempted": True,
@@ -171,7 +176,13 @@ def test_execution_trace_includes_llm_planner_metadata():
     planning_step = next(step for step in trace["steps"] if step["stage"] == "planning")
     assert planning_step["execution_mode"] == "llm"
     assert "planner=llm" in planning_step["detail"]
+    assert "route=attempt_llm" in planning_step["detail"]
     assert trace["summary"]["planner_mode"] == "llm"
+    assert trace["summary"]["planner_mode_config"] == "auto"
+    assert trace["summary"]["llm_planner_auto_route"] is True
+    assert trace["summary"]["llm_planner_complexity_score"] == 6
+    assert trace["summary"]["llm_planner_complexity_signals"] == ["long_query", "multiple_preferences"]
+    assert trace["summary"]["llm_planner_route_decision"] == "attempt_llm"
     assert trace["summary"]["llm_planner_enabled"] is True
     assert trace["summary"]["llm_planner_attempted"] is True
     assert trace["summary"]["llm_planner_adopted"] is True
