@@ -38,21 +38,41 @@ def test_frontend_calls_chat_and_external_status_apis():
     assert "data.artifacts" in app_vue
 
 
+def test_frontend_components_are_split_by_responsibility():
+    """前端已拆分为聊天、状态和结构化卡片组件"""
+    app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+    components_dir = FRONTEND_DIR / "src" / "components"
+
+    assert (components_dir / "ChatPanel.vue").exists()
+    assert (components_dir / "StatusPanel.vue").exists()
+    assert (components_dir / "ArtifactCards.vue").exists()
+    assert "import ChatPanel" in app_vue
+    assert "import StatusPanel" in app_vue
+    assert "<ChatPanel" in app_vue
+    assert "<StatusPanel" in app_vue
+
+
 def test_frontend_renders_structured_artifacts():
     """前端包含行程、天气、路线和景点结构化展示"""
-    app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+    artifact_vue = (FRONTEND_DIR / "src" / "components" / "ArtifactCards.vue").read_text(encoding="utf-8")
 
-    assert "message.artifacts.itinerary" in app_vue
-    assert "message.artifacts.weather" in app_vue
-    assert "message.artifacts.weather_adjustment" in app_vue
-    assert "message.artifacts.route" in app_vue
-    assert "message.artifacts.attractions" in app_vue
+    assert "artifacts.itinerary" in artifact_vue
+    assert "artifacts.weather" in artifact_vue
+    assert "artifacts.weather_adjustment" in artifact_vue
+    assert "artifacts.route" in artifact_vue
+    assert "artifacts.attractions" in artifact_vue
 
 
 def test_frontend_avoids_raw_html_rendering():
     """前端不使用原始HTML渲染Agent回复"""
-    app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+    source_files = [
+        FRONTEND_DIR / "src" / "App.vue",
+        FRONTEND_DIR / "src" / "components" / "ChatPanel.vue",
+        FRONTEND_DIR / "src" / "components" / "ArtifactCards.vue",
+        FRONTEND_DIR / "src" / "components" / "StatusPanel.vue",
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
 
-    assert "v-html" not in app_vue
-    assert "innerHTML" not in app_vue
-    assert "{{ message.content }}" in app_vue
+    assert "v-html" not in combined
+    assert "innerHTML" not in combined
+    assert "{{ message.content }}" in combined
