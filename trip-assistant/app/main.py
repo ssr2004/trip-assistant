@@ -2,8 +2,9 @@
 旅行AI助手 - 主应用入口
 FastAPI应用，提供REST API和WebSocket接口
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 import json
 import uuid
@@ -14,6 +15,18 @@ from core.agent import TravelAgent
 
 # 全局Agent实例
 agent = None
+
+
+class ChatRequest(BaseModel):
+    """聊天请求协议"""
+    message: str = Field(..., description="用户消息")
+    session_id: str | None = Field(default=None, description="会话ID")
+
+
+class ChatResponse(BaseModel):
+    """聊天响应协议"""
+    session_id: str
+    response: str
 
 
 @asynccontextmanager
@@ -55,22 +68,19 @@ async def root():
     }
 
 
-@app.post("/api/chat")
-async def chat(request: dict):
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
     """普通对话接口"""
-    message = request.get("message", "")
-    session_id = request.get("session_id", str(uuid.uuid4()))
+    message = request.message.strip()
+    session_id = (request.session_id or "").strip() or str(uuid.uuid4())
 
     if not message:
-        return {"error": "消息不能为空"}
+        raise HTTPException(status_code=400, detail="消息不能为空")
 
     # 调用Agent处理
     response = await agent.arun(message, session_id)
 
-    return {
-        "session_id": session_id,
-        "response": response
-    }
+    return ChatResponse(session_id=session_id, response=response)
 
 
 @app.websocket("/ws/chat")

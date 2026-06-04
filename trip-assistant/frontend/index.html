@@ -64,6 +64,7 @@
             border-radius: 12px;
             font-size: 14px;
             line-height: 1.6;
+            white-space: pre-wrap;
         }
         .message.user .message-bubble {
             background: #667eea;
@@ -155,11 +156,15 @@
     <script>
         const messagesDiv = document.getElementById('messages');
         const userInput = document.getElementById('userInput');
+        let sessionId = window.localStorage.getItem('travelMindSessionId') || '';
 
         function addMessage(content, role) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${role}`;
-            messageDiv.innerHTML = `<div class="message-bubble">${content}</div>`;
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.textContent = content;
+            messageDiv.appendChild(bubbleDiv);
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
@@ -177,10 +182,21 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ message: message })
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: sessionId || undefined
+                    })
                 });
 
                 const data = await response.json();
+                if (!response.ok) {
+                    addMessage(data.detail || data.error || '请求处理失败。', 'assistant');
+                    return;
+                }
+                if (data.session_id) {
+                    sessionId = data.session_id;
+                    window.localStorage.setItem('travelMindSessionId', sessionId);
+                }
                 addMessage(data.response || '处理完成', 'assistant');
             } catch (error) {
                 addMessage('抱歉，处理请求时出现错误。', 'assistant');
