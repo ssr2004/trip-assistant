@@ -42,22 +42,22 @@ interface QuickAction {
 
 const quickActions: QuickAction[] = [
   {
-    label: "完整规划",
+    label: "1 完整规划",
     icon: Plane,
     prompt: "我要从郑州去杭州玩三天，预算3000，6月10日出发",
   },
   {
-    label: "雨天调整",
+    label: "2 雨天调整",
     icon: Umbrella,
     prompt: "如果下雨怎么办？",
   },
   {
-    label: "路线优化",
+    label: "3 路线优化",
     icon: Route,
     prompt: "帮我按距离优化一下第二天行程",
   },
   {
-    label: "景点追问",
+    label: "4 景点追问",
     icon: MapPinned,
     prompt: "西湖在哪里？",
   },
@@ -160,7 +160,7 @@ function capabilityLabel(capability: string) {
         </button>
       </div>
       <p class="hint">
-        建议顺序：完整规划 -> 雨天调整 -> 路线优化 -> 景点追问。
+        建议顺序：先看外部能力状态，再依次执行 1 到 4，并在每轮回答下方查看 artifacts 和 trace。
       </p>
     </section>
 

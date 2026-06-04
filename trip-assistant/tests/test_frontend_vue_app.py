@@ -103,6 +103,25 @@ def test_frontend_renders_execution_trace_timeline():
     assert "data.execution_trace" in app_vue
 
 
+def test_frontend_has_resume_demo_script_shortcuts():
+    """前端提供可按顺序执行的简历演示脚本入口"""
+    status_panel = (FRONTEND_DIR / "src" / "components" / "StatusPanel.vue").read_text(encoding="utf-8")
+
+    expected_script = [
+        "1 完整规划",
+        "我要从郑州去杭州玩三天，预算3000，6月10日出发",
+        "2 雨天调整",
+        "如果下雨怎么办？",
+        "3 路线优化",
+        "帮我按距离优化一下第二天行程",
+        "4 景点追问",
+        "西湖在哪里？",
+        "artifacts 和 trace",
+    ]
+    for text in expected_script:
+        assert text in status_panel
+
+
 def test_frontend_avoids_raw_html_rendering():
     """前端不使用原始HTML渲染Agent回复"""
     source_files = [

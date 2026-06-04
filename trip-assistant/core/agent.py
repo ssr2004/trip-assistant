@@ -1155,6 +1155,9 @@ class TravelAgent:
                 if data.get("weather_summary"):
                     artifacts["weather_adjustment"] = data.get("weather_summary")
 
+            if task_type == "dynamic_rag_query" and (data.get("sources") or data.get("documents")):
+                artifacts["attractions"] = self._build_dynamic_attractions_artifact(data)
+
         return normalize_chat_artifacts(artifacts)
 
     def _build_itinerary_artifact(self, data: Dict[str, Any], title: str) -> Dict[str, Any]:
@@ -1179,6 +1182,28 @@ class TravelAgent:
             "total_distance": data.get("total_distance", 0),
             "total_duration": data.get("total_duration", 0),
             "mode": data.get("mode"),
+        }
+
+    def _build_dynamic_attractions_artifact(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """将动态RAG追问命中的景点文档转换为前端可展示卡片。"""
+        sources = copy.deepcopy(data.get("sources") or [])
+        documents = copy.deepcopy(data.get("documents") or [])
+        visible_sources = sources or documents[:3]
+        items = []
+        for source in visible_sources[:4]:
+            metadata = source.get("metadata", {}) if isinstance(source.get("metadata"), dict) else {}
+            items.append({
+                "name": source.get("title") or metadata.get("name") or "相关景点",
+                "category": metadata.get("category") or "动态RAG命中",
+                "rating": metadata.get("rating"),
+                "address": metadata.get("address"),
+                "location": metadata.get("location"),
+            })
+
+        return {
+            "location": data.get("query"),
+            "items": items,
+            "sources": visible_sources[:3],
         }
 
     async def astream(self, message: str, session_id: str) -> AsyncGenerator[str, None]:
