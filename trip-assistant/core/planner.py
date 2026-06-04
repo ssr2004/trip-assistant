@@ -13,7 +13,7 @@ from models.task import PlanningTask, TaskPlan
 class TaskPlanner:
     """任务规划器"""
 
-    ALLOWED_TASK_TYPES = {"ask_user", "tool_call", "recommend_destination", "generate_itinerary", "dynamic_rag_query"}
+    ALLOWED_TASK_TYPES = {"ask_user", "tool_call", "recommend_destination", "generate_itinerary", "dynamic_rag_query", "revise_itinerary"}
     ALLOWED_TOOLS = {
         "search_flights",
         "search_hotels",
@@ -154,6 +154,9 @@ class TaskPlanner:
 
         if intent_type == "dynamic_knowledge_query":
             return self._build_dynamic_rag_plan(intent_type, user_query)
+
+        if intent_type == "itinerary_revision":
+            return self._build_itinerary_revision_plan(intent_type, user_query)
 
         return TaskPlan(
             intent=intent_type,
@@ -360,6 +363,23 @@ class TaskPlanner:
             tasks=[task],
             need_user_input=False,
             summary="规划任务：检索动态外部知识。",
+        )
+
+    def _build_itinerary_revision_plan(self, intent_type: str, user_query: str) -> TaskPlan:
+        """构建行程修订任务"""
+        task = PlanningTask(
+            task_id="revise_itinerary_1",
+            task_type="revise_itinerary",
+            name="修订旅行行程",
+            priority=1,
+            params={"query": user_query},
+            reason="用户基于上一轮行程提出调整，需要读取会话行程上下文并修订每日安排。",
+        )
+        return TaskPlan(
+            intent=intent_type,
+            tasks=[task],
+            need_user_input=False,
+            summary="规划任务：修订旅行行程。",
         )
 
     def _build_single_tool_plan(

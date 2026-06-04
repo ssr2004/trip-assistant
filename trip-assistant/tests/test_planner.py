@@ -100,6 +100,24 @@ def test_plan_policy_query():
     assert tasks[0]["params"]["query"] == "机票能退吗"
 
 
+def test_plan_itinerary_revision():
+    """行程调整生成内部修订任务"""
+    planner = TaskPlanner()
+    intent = {
+        "intent": "itinerary_revision",
+        "entities": {},
+        "missing_slots": [],
+    }
+
+    tasks = planner.plan(intent, {"query": "把西湖安排到第一天"})
+
+    assert len(tasks) == 1
+    assert tasks[0]["task_type"] == "revise_itinerary"
+    assert tasks[0]["tool"] is None
+    assert tasks[0]["params"]["query"] == "把西湖安排到第一天"
+
+
+
 def test_plan_dynamic_knowledge_query():
     """动态知识追问生成内部动态RAG检索任务"""
     planner = TaskPlanner()

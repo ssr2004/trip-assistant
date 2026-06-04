@@ -67,6 +67,53 @@ async def test_attraction_search_shows_external_rag_source(agent):
 
 
 @pytest.mark.asyncio
+async def test_agent_revises_itinerary_after_travel_plan(agent):
+    """Agent支持基于上一轮完整行程调整景点到指定天数"""
+    session_id = "test-session-itinerary-revision-move"
+
+    await agent.arun("我要从郑州去杭州玩三天，预算3000，6月10日出发", session_id)
+    response = await agent.arun("把西湖安排到第一天", session_id)
+
+    assert "已根据您的要求调整行程" in response
+    assert "已将西湖安排到第1天" in response
+    assert "调整后的每日行程" in response
+    assert "Day 1" in response
+    assert "西湖" in response
+
+
+@pytest.mark.asyncio
+async def test_agent_replaces_attraction_after_travel_plan(agent):
+    """Agent支持移除并替换历史行程中的景点"""
+    session_id = "test-session-itinerary-revision-replace"
+
+    await agent.arun("我要从郑州去杭州玩三天，预算3000，6月10日出发", session_id)
+    response = await agent.arun("不要去宋城，换一个自然风光景点", session_id)
+
+    assert "已根据您的要求调整行程" in response
+    assert "已移除宋城" in response
+    assert "调整后的每日行程" in response
+    assert "Day" in response
+
+
+@pytest.mark.asyncio
+async def test_agent_revise_itinerary_without_history(agent):
+    """没有历史行程时行程调整给出合理提示"""
+    response = await agent.arun("把西湖安排到第一天", "test-session-itinerary-revision-empty")
+
+    assert "暂时还没有可调整的历史行程" in response
+
+
+@pytest.mark.asyncio
+async def test_itinerary_revision_isolated_by_session(agent):
+    """不同会话的历史行程上下文互相隔离"""
+    await agent.arun("我要从郑州去杭州玩三天，预算3000，6月10日出发", "test-session-with-itinerary")
+
+    response = await agent.arun("把西湖安排到第一天", "test-session-without-itinerary")
+
+    assert "暂时还没有可调整的历史行程" in response
+
+
+@pytest.mark.asyncio
 async def test_agent_answers_dynamic_rag_followup(agent):
     """Agent支持基于上一轮外部景点数据的追问"""
     session_id = "test-session-dynamic-followup"

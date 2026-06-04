@@ -41,6 +41,8 @@ class ResponseBuilder:
             return self._format_guide_query_response(task_results)
         if intent_type == "dynamic_knowledge_query":
             return self._format_dynamic_knowledge_response(task_results)
+        if intent_type == "itinerary_revision":
+            return self._format_itinerary_revision_response(task_results)
         if intent_type == "flight_search":
             return self._format_single_tool_response("航班推荐", task_results, "search_flights")
         if intent_type == "hotel_search":
@@ -190,6 +192,25 @@ class ResponseBuilder:
             lines.append("\n资料来源：")
             for source in sources[:3]:
                 lines.append(self._format_source_reference(source, "外部景点数据"))
+        return "\n".join(lines)
+
+    def _format_itinerary_revision_response(self, task_results: List[Dict]) -> str:
+        """格式化行程修订回复"""
+        result = self._find_result_by_task_type(task_results, "revise_itinerary")
+        data = result.get("result", {}) if result else {}
+        if not data.get("success"):
+            return data.get("message") or "我暂时还没有可调整的历史行程。您可以先让我生成一个完整旅行计划。"
+
+        lines = [f"已根据您的要求调整行程：{data.get('summary', '行程已更新。')}"]
+        itinerary = data.get("itinerary") or []
+        if itinerary:
+            lines.extend(self._format_itinerary(itinerary, section_title="调整后的每日行程"))
+
+        sources = data.get("sources") or []
+        if sources:
+            lines.append("资料依据：")
+            for source in sources[:3]:
+                lines.append(f"- {source}")
         return "\n".join(lines)
 
     def _format_single_tool_response(self, title: str, task_results: List[Dict], tool_name: str) -> str:

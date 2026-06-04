@@ -200,6 +200,36 @@ def test_build_policy_response():
     assert "flight_policy.md" in response
 
 
+def test_build_itinerary_revision_response():
+    """行程调整输出修订后的每日安排"""
+    builder = ResponseBuilder()
+    response = builder.build(
+        intent={"intent": "itinerary_revision"},
+        task_results=[
+            {
+                "task": {"task_type": "revise_itinerary", "name": "修订旅行行程"},
+                "success": True,
+                "result": {
+                    "success": True,
+                    "summary": "已将西湖安排到第1天。",
+                    "itinerary": [
+                        {"day": 1, "title": "抵达杭州", "activities": ["抵达杭州", "西湖"], "notes": "轻松游览。"}
+                    ],
+                    "sources": ["上一轮旅行方案", "会话动态景点数据"],
+                },
+                "error": None,
+            }
+        ],
+    )
+
+    assert "已根据您的要求调整行程" in response
+    assert "调整后的每日行程" in response
+    assert "Day 1" in response
+    assert "西湖" in response
+    assert "资料依据" in response
+
+
+
 def test_build_dynamic_knowledge_response():
     """动态外部知识追问输出答案和来源"""
     builder = ResponseBuilder()

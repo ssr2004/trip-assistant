@@ -47,6 +47,7 @@ class IntentParser:
         "policy_query": [],
         "guide_query": [],
         "dynamic_knowledge_query": [],
+        "itinerary_revision": [],
         "general_chat": [],
     }
 
@@ -108,6 +109,9 @@ class IntentParser:
         ]):
             return "policy_query"
 
+        if self._is_itinerary_revision(text):
+            return "itinerary_revision"
+
         if self._is_dynamic_knowledge_query(text):
             return "dynamic_knowledge_query"
 
@@ -156,6 +160,15 @@ class IntentParser:
             return True
         return False
 
+    def _is_itinerary_revision(self, text: str) -> bool:
+        """判断是否为基于历史行程的计划修订请求"""
+        revision_keywords = [
+            "安排到", "安排在", "放到", "放在", "换一个", "替换", "不要去", "不想去",
+            "删掉", "删除", "移除", "重新安排", "调整一下", "排一下顺序", "排序",
+        ]
+        poi_keywords = ["西湖", "灵隐寺", "西溪", "宋城", "景点", "行程"]
+        return any(keyword in text for keyword in revision_keywords) and any(keyword in text for keyword in poi_keywords)
+
     def _extract_entities(self, text: str, intent: str) -> Dict:
         """提取旅行实体"""
         origin, destination = self._extract_route(text, intent)
@@ -191,7 +204,7 @@ class IntentParser:
         found_cities = self._find_cities(text)
         if len(found_cities) >= 2:
             return found_cities[0], found_cities[1]
-        if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan", "guide_query", "dynamic_knowledge_query"}:
+        if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan", "guide_query", "dynamic_knowledge_query", "itinerary_revision"}:
             return None, found_cities[0]
         return None, None
 
@@ -329,7 +342,7 @@ class IntentParser:
                     content=(
                         "请解析下面的旅行需求，并返回严格JSON。\n"
                         "JSON字段必须包含：intent、entities、confidence、missing_slots、followup_question。\n"
-                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、guide_query、dynamic_knowledge_query、general_chat。\n"
+                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、guide_query、dynamic_knowledge_query、itinerary_revision、general_chat。\n"
                         "entities必须包含 origin、destination、departure_date、return_date、duration、budget、travelers、preferences。\n"
                         f"用户输入：{user_input}\n"
                         f"规则解析结果：{json.dumps(rule_result, ensure_ascii=False)}"

@@ -12,6 +12,7 @@ TaskType = Literal[
     "recommend_destination",
     "generate_itinerary",
     "dynamic_rag_query",
+    "revise_itinerary",
 ]
 
 

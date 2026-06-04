@@ -2,7 +2,9 @@
 旅行Agent核心模块
 实现主Agent逻辑，协调各个子模块
 """
-from typing import Dict, List, AsyncGenerator, Any
+import copy
+import re
+from typing import Dict, List, AsyncGenerator, Any, Optional
 
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
@@ -29,6 +31,7 @@ class TravelAgent:
         self.rag_retriever = RAGRetriever()
         self.dynamic_rag_store = DynamicRAGStore()
         self.dynamic_rag_stores = {"default": self.dynamic_rag_store}
+        self.session_itinerary_contexts = {}
         self.tool_registry = ToolRegistry()
         self.response_builder = ResponseBuilder()
 
@@ -124,6 +127,15 @@ class TravelAgent:
                 self._index_task_result(task_result, result_by_task_id)
                 continue
 
+            if task_type == "revise_itinerary":
+                task_result = self._build_internal_result(
+                    task,
+                    self._revise_itinerary(task, state.get("session_id", "default")),
+                )
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
+                continue
+
             tool_name = task.get("tool")
             params = self._inject_dependency_context(
                 task=task,
@@ -157,11 +169,13 @@ class TravelAgent:
 
         messages = state.get("messages", [])
         query = messages[-1].content if messages else ""
+        session_id = state.get("session_id", "default")
         dynamic_rag_context = self._collect_dynamic_rag_context(
             results,
             query,
-            state.get("session_id", "default"),
+            session_id,
         )
+        self._collect_itinerary_context(results, session_id)
         return {"task_results": results, "dynamic_rag_context": dynamic_rag_context}
 
     async def _generate_response(self, state: AgentState) -> Dict:
@@ -243,6 +257,40 @@ class TravelAgent:
             self.dynamic_rag_stores[key] = DynamicRAGStore()
         self.dynamic_rag_store = self.dynamic_rag_stores[key]
         return self.dynamic_rag_stores[key]
+
+    def _collect_itinerary_context(self, task_results: List[Dict], session_id: str) -> None:
+        """从完整旅行规划结果中收集会话级行程上下文"""
+        itinerary_data = None
+        attractions = []
+        rag_documents = []
+
+        for task_result in task_results:
+            task = task_result.get("task", {})
+            data = self._extract_result_data(task_result)
+            if not isinstance(data, dict):
+                continue
+            if task.get("tool") == "generate_itinerary" and data.get("itinerary"):
+                itinerary_data = data
+            if task.get("tool") == "search_attractions":
+                attractions = self._safe_list(data, "attractions")
+                rag_documents = self._safe_list(data, "rag_documents")
+
+        if not itinerary_data:
+            return
+
+        key = session_id or "default"
+        self.session_itinerary_contexts[key] = {
+            "origin": itinerary_data.get("origin"),
+            "destination": itinerary_data.get("destination"),
+            "duration": itinerary_data.get("duration"),
+            "budget": itinerary_data.get("budget"),
+            "travelers": itinerary_data.get("travelers"),
+            "preferences": itinerary_data.get("preferences", []),
+            "itinerary": copy.deepcopy(itinerary_data.get("itinerary", [])),
+            "budget_summary": copy.deepcopy(itinerary_data.get("budget_summary", {})),
+            "attractions": copy.deepcopy(attractions),
+            "rag_documents": copy.deepcopy(rag_documents),
+        }
 
     def _query_dynamic_rag(self, task: Dict, session_id: str) -> Dict:
         """基于会话动态RAG文档回答追问"""
@@ -329,6 +377,199 @@ class TravelAgent:
                 if cleaned and cleaned != title:
                     lines.append(f"- {cleaned}")
         return "\n".join(lines)
+
+    def _revise_itinerary(self, task: Dict, session_id: str) -> Dict:
+        """基于会话历史行程执行规则型修订"""
+        query = (task.get("params", {}) or {}).get("query", "")
+        context = self.session_itinerary_contexts.get(session_id or "default")
+        if not context:
+            return {
+                "success": False,
+                "query": query,
+                "message": "我暂时还没有可调整的历史行程。您可以先让我生成一个完整旅行计划，例如“我要从郑州去杭州玩三天”。",
+                "itinerary": [],
+                "sources": [],
+            }
+
+        revised_context = copy.deepcopy(context)
+        itinerary = revised_context.get("itinerary", [])
+        attraction_names = self._known_attraction_names(revised_context)
+        target_names = self._extract_revision_attractions(query, attraction_names)
+        target_day = self._extract_revision_day(query)
+
+        if self._is_replace_revision(query):
+            result = self._apply_replace_revision(query, itinerary, revised_context, target_names)
+        elif self._is_remove_revision(query):
+            result = self._apply_remove_revision(query, itinerary, target_names)
+        elif target_day:
+            result = self._apply_move_revision(query, itinerary, target_names, target_day)
+        else:
+            result = {
+                "success": False,
+                "action": "unknown",
+                "summary": "我已收到调整请求，但暂时只支持安排到某一天、移除景点和替换景点。",
+            }
+
+        revised_context["itinerary"] = itinerary
+        if result.get("success"):
+            self.session_itinerary_contexts[session_id or "default"] = revised_context
+
+        return {
+            "success": result.get("success", False),
+            "query": query,
+            "action": result.get("action"),
+            "summary": result.get("summary"),
+            "message": result.get("message"),
+            "itinerary": itinerary,
+            "sources": ["上一轮旅行方案", "会话动态景点数据"],
+        }
+
+    def _known_attraction_names(self, context: Dict) -> List[str]:
+        """获取当前会话已知景点名称"""
+        names = []
+        for attraction in context.get("attractions", []) or []:
+            name = attraction.get("name")
+            if name and name not in names:
+                names.append(name)
+        for document in context.get("rag_documents", []) or []:
+            title = document.get("title")
+            if title and title not in names:
+                names.append(title)
+        for day in context.get("itinerary", []) or []:
+            for activity in day.get("activities", []) or []:
+                for name in ["西湖", "灵隐寺", "西溪国家湿地公园", "宋城"]:
+                    if name in activity and name not in names:
+                        names.append(name)
+        return names
+
+    def _extract_revision_attractions(self, query: str, attraction_names: List[str]) -> List[str]:
+        """从修订请求中提取景点名"""
+        return [name for name in sorted(attraction_names, key=len, reverse=True) if name in query]
+
+    def _extract_revision_day(self, query: str) -> Optional[int]:
+        """从修订请求中提取目标天数"""
+        digit_match = re.search(r"第?(\d+)天", query)
+        if digit_match:
+            return int(digit_match.group(1))
+        chinese_numbers = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5}
+        chinese_match = re.search(r"第?([一二两三四五])天", query)
+        if chinese_match:
+            return chinese_numbers.get(chinese_match.group(1))
+        return None
+
+    def _is_remove_revision(self, query: str) -> bool:
+        """判断是否为移除景点请求"""
+        return any(keyword in query for keyword in ["不要去", "不想去", "删掉", "删除", "移除"])
+
+    def _is_replace_revision(self, query: str) -> bool:
+        """判断是否为替换景点请求"""
+        return any(keyword in query for keyword in ["换一个", "替换"])
+
+    def _apply_move_revision(self, query: str, itinerary: List[Dict], target_names: List[str], target_day: int) -> Dict:
+        """将景点移动到指定天数"""
+        if not target_names:
+            return {"success": False, "action": "move", "message": "没有识别到需要安排的景点名称。"}
+        target_name = target_names[0]
+        target = self._find_day(itinerary, target_day)
+        if not target:
+            return {"success": False, "action": "move", "message": f"当前行程中没有第{target_day}天。"}
+
+        self._remove_activity_by_name(itinerary, target_name)
+        self._append_activity(target, target_name)
+        return {
+            "success": True,
+            "action": "move",
+            "summary": f"已将{target_name}安排到第{target_day}天。",
+        }
+
+    def _apply_remove_revision(self, query: str, itinerary: List[Dict], target_names: List[str]) -> Dict:
+        """从行程中移除景点"""
+        if not target_names:
+            return {"success": False, "action": "remove", "message": "没有识别到需要移除的景点名称。"}
+        removed_names = []
+        for name in target_names:
+            if self._remove_activity_by_name(itinerary, name):
+                removed_names.append(name)
+        if not removed_names:
+            return {"success": False, "action": "remove", "message": "当前行程中没有找到要移除的景点。"}
+        return {
+            "success": True,
+            "action": "remove",
+            "summary": f"已从行程中移除{'、'.join(removed_names)}。",
+        }
+
+    def _apply_replace_revision(self, query: str, itinerary: List[Dict], context: Dict, target_names: List[str]) -> Dict:
+        """替换行程中的景点"""
+        if not target_names:
+            return {"success": False, "action": "replace", "message": "没有识别到需要替换的景点名称。"}
+        removed_name = target_names[0]
+        replacement = self._select_replacement_attraction(query, context, removed_name)
+        if not replacement:
+            return {"success": False, "action": "replace", "message": "暂时没有找到合适的替换景点。"}
+
+        replaced = self._replace_activity_by_name(itinerary, removed_name, replacement)
+        if not replaced:
+            self._remove_activity_by_name(itinerary, removed_name)
+            first_day = self._find_day(itinerary, 1)
+            if first_day:
+                self._append_activity(first_day, replacement)
+        return {
+            "success": True,
+            "action": "replace",
+            "summary": f"已移除{removed_name}，并替换为{replacement}。",
+        }
+
+    def _select_replacement_attraction(self, query: str, context: Dict, removed_name: str) -> Optional[str]:
+        """根据偏好选择替换景点"""
+        attractions = context.get("attractions", []) or []
+        natural_keywords = ["自然风光", "风景名胜", "湿地", "西湖", "西溪"]
+        for attraction in attractions:
+            name = attraction.get("name")
+            if not name or name == removed_name:
+                continue
+            category = attraction.get("category", "")
+            description = attraction.get("description", "")
+            if "自然风光" in query and not any(keyword in f"{name}{category}{description}" for keyword in natural_keywords):
+                continue
+            return name
+        for name in self._known_attraction_names(context):
+            if name != removed_name:
+                return name
+        return None
+
+    def _find_day(self, itinerary: List[Dict], day_number: int) -> Optional[Dict]:
+        """按天数查找行程日"""
+        for day in itinerary:
+            if day.get("day") == day_number:
+                return day
+        return None
+
+    def _remove_activity_by_name(self, itinerary: List[Dict], attraction_name: str) -> bool:
+        """从所有天的活动中移除包含指定景点名的活动"""
+        removed = False
+        for day in itinerary:
+            activities = day.get("activities", []) or []
+            kept = [activity for activity in activities if attraction_name not in str(activity)]
+            if len(kept) != len(activities):
+                removed = True
+            day["activities"] = kept
+        return removed
+
+    def _replace_activity_by_name(self, itinerary: List[Dict], old_name: str, new_name: str) -> bool:
+        """将包含旧景点名的活动替换为新景点名"""
+        for day in itinerary:
+            activities = day.get("activities", []) or []
+            for index, activity in enumerate(activities):
+                if old_name in str(activity):
+                    activities[index] = new_name
+                    return True
+        return False
+
+    def _append_activity(self, day: Dict, activity_name: str) -> None:
+        """向某天添加活动并避免重复"""
+        activities = day.setdefault("activities", [])
+        if not any(activity_name in str(activity) for activity in activities):
+            activities.append(activity_name)
 
     def _inject_dependency_context(
         self,
@@ -501,6 +742,8 @@ class TravelAgent:
         return self.memory_manager.get_history(session_id)
 
     def clear_history(self, session_id: str):
-        """清除对话历史和会话动态RAG文档"""
+        """清除对话历史、会话动态RAG文档和行程上下文"""
         self.memory_manager.clear_history(session_id)
-        self.dynamic_rag_stores.pop(session_id or "default", None)
+        key = session_id or "default"
+        self.dynamic_rag_stores.pop(key, None)
+        self.session_itinerary_contexts.pop(key, None)
