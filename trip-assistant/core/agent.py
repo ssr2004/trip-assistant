@@ -13,6 +13,7 @@ from core.planner import TaskPlanner
 from core.memory.manager import MemoryManager
 from core.intent import IntentParser
 from core.response_builder import ResponseBuilder
+from rag.dynamic_store import DynamicRAGStore
 from rag.retriever import RAGRetriever
 from tools.registry import ToolRegistry
 
@@ -26,6 +27,7 @@ class TravelAgent:
         self.task_planner = TaskPlanner()
         self.memory_manager = MemoryManager()
         self.rag_retriever = RAGRetriever()
+        self.dynamic_rag_store = DynamicRAGStore()
         self.tool_registry = ToolRegistry()
         self.response_builder = ResponseBuilder()
 
@@ -143,7 +145,10 @@ class TravelAgent:
                 results.append(task_result)
                 self._index_task_result(task_result, result_by_task_id)
 
-        return {"task_results": results}
+        messages = state.get("messages", [])
+        query = messages[-1].content if messages else ""
+        dynamic_rag_context = self._collect_dynamic_rag_context(results, query)
+        return {"task_results": results, "dynamic_rag_context": dynamic_rag_context}
 
     async def _generate_response(self, state: AgentState) -> Dict:
         """生成最终回复"""
@@ -194,6 +199,27 @@ class TravelAgent:
         if hasattr(result, "model_dump"):
             return result.model_dump()
         return result
+
+    def _collect_dynamic_rag_context(self, task_results: List[Dict], query: str) -> Dict:
+        """收集工具返回的外部RAG文档并写入动态存储"""
+        documents = []
+        for task_result in task_results:
+            data = self._extract_result_data(task_result)
+            if not isinstance(data, dict):
+                continue
+            rag_documents = data.get("rag_documents") or []
+            if isinstance(rag_documents, list):
+                documents.extend(item for item in rag_documents if isinstance(item, dict))
+
+        if documents:
+            self.dynamic_rag_store.add_documents(documents)
+
+        sources = self.dynamic_rag_store.search(query, top_k=3) if query else []
+        return {
+            "documents": documents,
+            "sources": sources,
+            "document_count": len(self.dynamic_rag_store.list_documents()),
+        }
 
     def _inject_dependency_context(
         self,
@@ -346,6 +372,7 @@ class TravelAgent:
             "task_results": [],
             "rag_context": [],
             "memory_context": {},
+            "dynamic_rag_context": {},
             "session_id": session_id,
         }
 

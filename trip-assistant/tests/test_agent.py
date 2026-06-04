@@ -3,6 +3,8 @@ Agent测试
 """
 import pytest
 import asyncio
+from langchain_core.messages import HumanMessage
+
 from core.agent import TravelAgent
 
 
@@ -62,6 +64,29 @@ async def test_attraction_search_shows_external_rag_source(agent):
     assert "西湖" in response
     assert "资料来源" in response
     assert "api/amap/attraction" in response
+
+
+@pytest.mark.asyncio
+async def test_agent_collects_external_rag_documents(agent):
+    """Agent执行景点工具后收集外部RAG动态文档"""
+    result = await agent._execute_tasks({
+        "messages": [HumanMessage(content="杭州有什么好玩的")],
+        "tasks": [
+            {
+                "task_type": "tool_call",
+                "tool": "search_attractions",
+                "name": "搜索景点",
+                "priority": 1,
+                "params": {"location": "杭州"},
+            }
+        ],
+    })
+
+    dynamic_context = result["dynamic_rag_context"]
+    assert dynamic_context["documents"]
+    assert dynamic_context["document_count"] >= 1
+    assert dynamic_context["sources"]
+    assert dynamic_context["sources"][0]["source"].startswith("api/amap/attraction/")
 
 
 @pytest.mark.asyncio

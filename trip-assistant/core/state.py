@@ -2,7 +2,7 @@
 Agent状态定义
 定义LangGraph工作流的状态结构
 """
-from typing import TypedDict, List, Dict, Optional, Annotated
+from typing import TypedDict, List, Dict, Optional, Annotated, NotRequired
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
 
@@ -27,6 +27,9 @@ class AgentState(TypedDict):
 
     # 记忆系统上下文
     memory_context: Dict
+
+    # 动态RAG上下文
+    dynamic_rag_context: NotRequired[Dict]
 
     # 会话ID
     session_id: Optional[str]
