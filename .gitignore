@@ -30,3 +30,7 @@ trip-assistant/*.sqlite
 
 # Local planning documents
 trip-assistant/local-docs/
+
+# Frontend dependencies and build output
+trip-assistant/frontend/node_modules/
+trip-assistant/frontend/dist/
