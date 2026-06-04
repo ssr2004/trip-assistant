@@ -1,8 +1,10 @@
+import type { ChatResponse, ExternalStatusResponse } from "./types";
+
 const JSON_HEADERS = {
   "Content-Type": "application/json",
 };
 
-export async function sendChatMessage(message, sessionId) {
+export async function sendChatMessage(message: string, sessionId: string): Promise<ChatResponse> {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: JSON_HEADERS,
@@ -18,7 +20,7 @@ export async function sendChatMessage(message, sessionId) {
   return data;
 }
 
-export async function fetchExternalStatus() {
+export async function fetchExternalStatus(): Promise<ExternalStatusResponse> {
   const response = await fetch("/api/external/status");
   const data = await response.json();
   if (!response.ok) {

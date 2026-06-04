@@ -1,9 +1,10 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import { Plus, RefreshCw } from "@lucide/vue";
 import { fetchExternalStatus, sendChatMessage } from "./api";
 import ChatPanel from "./components/ChatPanel.vue";
 import StatusPanel from "./components/StatusPanel.vue";
+import type { ChatArtifacts, ChatMessage, ExternalStatusResponse, MessageRole } from "./types";
 
 const SESSION_STORAGE_KEY = "travelMindSessionId";
 
@@ -12,9 +13,9 @@ const sessionId = ref(window.localStorage.getItem(SESSION_STORAGE_KEY) || "");
 const loading = ref(false);
 const statusLoading = ref(false);
 const statusError = ref("");
-const externalStatus = ref(null);
-const chatPanel = ref(null);
-const messages = ref([
+const externalStatus = ref<ExternalStatusResponse | null>(null);
+const chatPanel = ref<{ scrollToBottom: () => void } | null>(null);
+const messages = ref<ChatMessage[]>([
   {
     id: crypto.randomUUID(),
     role: "assistant",
@@ -46,7 +47,11 @@ const shortSessionId = computed(() => {
 
 const sessionModeText = computed(() => (sessionId.value ? "会话保持中" : "首轮消息后自动创建"));
 
-function addMessage(role, content, artifacts = {}) {
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function addMessage(role: MessageRole, content: string, artifacts: ChatArtifacts = {}) {
   messages.value.push({
     id: crypto.randomUUID(),
     role,
@@ -94,7 +99,7 @@ async function submitMessage(messageOverride = "") {
   }
 }
 
-function runQuickAction(prompt) {
+function runQuickAction(prompt: string) {
   submitMessage(prompt);
 }
 

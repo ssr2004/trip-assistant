@@ -13,7 +13,7 @@ def test_frontend_vite_entry_exists():
     index_html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
 
     assert '<div id="app"></div>' in index_html
-    assert 'src="/src/main.js"' in index_html
+    assert 'src="/src/main.ts"' in index_html
 
 
 def test_frontend_package_has_vue_build_scripts():
@@ -23,16 +23,20 @@ def test_frontend_package_has_vue_build_scripts():
     assert '"vue"' in package_json
     assert '"vite"' in package_json
     assert '"@lucide/vue"' in package_json
-    assert '"build": "vite build"' in package_json
+    assert '"typescript"' in package_json
+    assert '"vue-tsc"' in package_json
+    assert '"build": "vue-tsc --noEmit && vite build"' in package_json
 
 
 def test_frontend_calls_chat_and_external_status_apis():
     """前端调用聊天和外部状态接口"""
-    api_js = (FRONTEND_DIR / "src" / "api.js").read_text(encoding="utf-8")
+    api_ts = (FRONTEND_DIR / "src" / "api.ts").read_text(encoding="utf-8")
     app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
 
-    assert 'fetch("/api/chat"' in api_js
-    assert 'fetch("/api/external/status")' in api_js
+    assert 'fetch("/api/chat"' in api_ts
+    assert 'fetch("/api/external/status")' in api_ts
+    assert "Promise<ChatResponse>" in api_ts
+    assert "Promise<ExternalStatusResponse>" in api_ts
     assert "travelMindSessionId" in app_vue
     assert "newSession" in app_vue
     assert "data.artifacts" in app_vue
@@ -50,6 +54,19 @@ def test_frontend_components_are_split_by_responsibility():
     assert "import StatusPanel" in app_vue
     assert "<ChatPanel" in app_vue
     assert "<StatusPanel" in app_vue
+
+
+def test_frontend_has_typescript_contract_boundary():
+    """前端通过TypeScript类型承接后端API协议"""
+    tsconfig = (FRONTEND_DIR / "tsconfig.json").read_text(encoding="utf-8")
+    types_ts = (FRONTEND_DIR / "src" / "types.ts").read_text(encoding="utf-8")
+    app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+
+    assert '"strict": true' in tsconfig
+    assert "export interface ChatArtifacts" in types_ts
+    assert "export interface ChatResponse" in types_ts
+    assert "export interface ExternalStatusResponse" in types_ts
+    assert '<script setup lang="ts">' in app_vue
 
 
 def test_frontend_renders_structured_artifacts():

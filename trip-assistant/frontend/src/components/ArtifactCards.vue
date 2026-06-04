@@ -1,12 +1,16 @@
-<script setup>
-defineProps({
-  artifacts: {
-    type: Object,
-    default: () => ({}),
-  },
-});
+<script setup lang="ts">
+import type { ChatArtifacts } from "../types";
 
-function formatDistance(distance) {
+withDefaults(
+  defineProps<{
+    artifacts?: ChatArtifacts;
+  }>(),
+  {
+    artifacts: () => ({}),
+  },
+);
+
+function formatDistance(distance?: number | string | null) {
   const meters = Number(distance || 0);
   if (meters >= 1000) {
     return `${(meters / 1000).toFixed(1)} 公里`;
@@ -14,12 +18,18 @@ function formatDistance(distance) {
   return `${Math.round(meters)} 米`;
 }
 
-function formatDuration(duration) {
+function formatDuration(duration?: number | string | null) {
   const seconds = Number(duration || 0);
   if (!seconds) {
     return "0 分钟";
   }
   return `${Math.max(Math.round(seconds / 60), 1)} 分钟`;
+}
+function artifactKey(value: unknown, fallback: string): string {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  return fallback;
 }
 </script>
 
@@ -35,7 +45,7 @@ function formatDuration(duration) {
       <div class="day-grid">
         <article
           v-for="day in artifacts.itinerary.days"
-          :key="day.day"
+          :key="artifactKey(day.day, `day-${day.title || 'untitled'}`)"
           class="day-card"
         >
           <b>Day {{ day.day }} · {{ day.title }}</b>
@@ -53,7 +63,7 @@ function formatDuration(duration) {
       <div class="weather-list">
         <article
           v-for="forecast in artifacts.weather.forecasts"
-          :key="forecast.date"
+          :key="artifactKey(forecast.date, `forecast-${forecast.weather || 'unknown'}`)"
           class="weather-item"
           :class="{ rainy: forecast.suitable_for_outdoor === false }"
         >
@@ -104,7 +114,7 @@ function formatDuration(duration) {
       <div class="attraction-grid">
         <article
           v-for="item in artifacts.attractions.items || []"
-          :key="item.id || item.name"
+          :key="artifactKey(item.id || item.name, `attraction-${item.name || 'unknown'}`)"
           class="attraction-card"
         >
           <b>{{ item.name }}</b>

@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+import type { Component } from "vue";
 import {
   CloudSun,
   MapPinned,
@@ -9,41 +10,37 @@ import {
   Sparkles,
   Umbrella,
 } from "@lucide/vue";
+import type { ExternalStatusResponse, ExternalStatusSummary } from "../types";
 
-defineProps({
-  externalStatus: {
-    type: Object,
-    default: null,
+withDefaults(
+  defineProps<{
+    externalStatus: ExternalStatusResponse | null;
+    statusSummary: ExternalStatusSummary;
+    statusLoading?: boolean;
+    statusError?: string;
+    sessionModeText: string;
+    shortSessionId: string;
+    loading?: boolean;
+  }>(),
+  {
+    externalStatus: null,
+    statusLoading: false,
+    statusError: "",
+    loading: false,
   },
-  statusSummary: {
-    type: Object,
-    required: true,
-  },
-  statusLoading: {
-    type: Boolean,
-    default: false,
-  },
-  statusError: {
-    type: String,
-    default: "",
-  },
-  sessionModeText: {
-    type: String,
-    required: true,
-  },
-  shortSessionId: {
-    type: String,
-    required: true,
-  },
-  loading: {
-    type: Boolean,
-    default: false,
-  },
-});
+);
 
-const emit = defineEmits(["run-quick"]);
+const emit = defineEmits<{
+  "run-quick": [prompt: string];
+}>();
 
-const quickActions = [
+interface QuickAction {
+  label: string;
+  icon: Component;
+  prompt: string;
+}
+
+const quickActions: QuickAction[] = [
   {
     label: "完整规划",
     icon: Plane,
@@ -66,8 +63,8 @@ const quickActions = [
   },
 ];
 
-function modeLabel(mode) {
-  const labels = {
+function modeLabel(mode: string) {
+  const labels: Record<string, string> = {
     real_api: "真实 API",
     mock_fallback: "Mock 降级",
     unavailable: "不可用",
@@ -75,8 +72,8 @@ function modeLabel(mode) {
   return labels[mode] || mode;
 }
 
-function capabilityLabel(capability) {
-  const labels = {
+function capabilityLabel(capability: string) {
+  const labels: Record<string, string> = {
     poi_search: "景点检索",
     route_distance: "路线距离",
     weather_forecast: "天气预报",

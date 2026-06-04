@@ -1,30 +1,27 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, ref } from "vue";
 import { MessageCircle, Send } from "@lucide/vue";
 import ArtifactCards from "./ArtifactCards.vue";
+import type { ChatMessage } from "../types";
 
-defineProps({
-  messages: {
-    type: Array,
-    required: true,
+withDefaults(
+  defineProps<{
+    messages: ChatMessage[];
+    loading?: boolean;
+    sessionId?: string;
+    shortSessionId: string;
+  }>(),
+  {
+    loading: false,
+    sessionId: "",
   },
-  loading: {
-    type: Boolean,
-    default: false,
-  },
-  sessionId: {
-    type: String,
-    default: "",
-  },
-  shortSessionId: {
-    type: String,
-    required: true,
-  },
-});
+);
 
-const emit = defineEmits(["send"]);
+const emit = defineEmits<{
+  send: [message: string];
+}>();
 const input = ref("");
-const messagesPanel = ref(null);
+const messagesPanel = ref<HTMLDivElement | null>(null);
 
 function submitMessage() {
   const message = input.value.trim();
@@ -35,7 +32,7 @@ function submitMessage() {
   input.value = "";
 }
 
-function hasArtifacts(message) {
+function hasArtifacts(message: ChatMessage) {
   return message.role === "assistant" && message.artifacts && Object.keys(message.artifacts).length > 0;
 }
 
