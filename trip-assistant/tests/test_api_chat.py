@@ -50,6 +50,7 @@ def test_chat_generates_session_id_when_missing(monkeypatch):
     assert response.status_code == 200
     data = response.json()
     UUID(data["session_id"])
+    assert data["artifacts"] == {}
     assert data["response"] == "已处理：杭州有什么好玩的"
     assert fake_agent.calls == [
         {"message": "杭州有什么好玩的", "session_id": data["session_id"]}
@@ -113,3 +114,18 @@ def test_chat_returns_artifacts_when_agent_provides_them(monkeypatch):
     assert data["response"] == "已处理：生成行程"
     assert data["artifacts"]["itinerary"]["destination"] == "杭州"
     assert data["artifacts"]["itinerary"]["days"][0]["title"] == "西湖初体验"
+
+
+def test_chat_openapi_uses_structured_artifact_schema(monkeypatch):
+    """OpenAPI exposes artifacts as a typed contract instead of a free-form dict."""
+    client, _ = make_client(monkeypatch)
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    chat_response = schemas["ChatResponse"]
+    artifacts_schema = chat_response["properties"]["artifacts"]
+    assert artifacts_schema["$ref"].endswith("/ChatArtifacts")
+    assert "ItineraryArtifact" in schemas
+    assert "RouteArtifact" in schemas

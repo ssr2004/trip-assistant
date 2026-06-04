@@ -11,6 +11,7 @@ import uuid
 
 from app.config import settings
 from core.agent import TravelAgent
+from core.artifacts import ChatArtifacts
 
 
 # 全局Agent实例
@@ -27,7 +28,7 @@ class ChatResponse(BaseModel):
     """聊天响应协议"""
     session_id: str
     response: str
-    artifacts: dict = Field(default_factory=dict)
+    artifacts: ChatArtifacts = Field(default_factory=ChatArtifacts)
 
 
 class ExternalServiceStatus(BaseModel):
@@ -87,7 +88,7 @@ async def root():
     }
 
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/chat", response_model=ChatResponse, response_model_exclude_none=True)
 async def chat(request: ChatRequest):
     """普通对话接口"""
     message = request.message.strip()

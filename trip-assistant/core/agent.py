@@ -15,6 +15,7 @@ from core.planner import TaskPlanner
 from core.memory.manager import MemoryManager
 from core.intent import IntentParser
 from core.response_builder import ResponseBuilder
+from core.artifacts import normalize_chat_artifacts
 from rag.dynamic_store import DynamicRAGStore
 from rag.retriever import RAGRetriever
 from tools.registry import ToolRegistry
@@ -970,7 +971,7 @@ class TravelAgent:
                 if data.get("weather_summary"):
                     artifacts["weather_adjustment"] = data.get("weather_summary")
 
-        return artifacts
+        return normalize_chat_artifacts(artifacts)
 
     def _build_itinerary_artifact(self, data: Dict[str, Any], title: str) -> Dict[str, Any]:
         """构建行程展示数据"""
