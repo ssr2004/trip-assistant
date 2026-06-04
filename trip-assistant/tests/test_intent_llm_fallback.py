@@ -10,21 +10,32 @@ from core.llm import LLMResponse
 class FakeLLMClient:
     """可控LLM客户端"""
 
-    def __init__(self, content: str = "", success: bool = True, available: bool = True):
+    def __init__(
+        self,
+        content: str = "",
+        success: bool = True,
+        available: bool = True,
+        contents: list[str] | None = None,
+        successes: list[bool] | None = None,
+    ):
         self.content = content
         self.success = success
         self.available = available
+        self.contents = contents or []
+        self.successes = successes or []
         self.calls = 0
         self.last_request = None
 
     async def chat(self, request):
         self.calls += 1
         self.last_request = request
+        content = self.contents[self.calls - 1] if self.calls <= len(self.contents) else self.content
+        success = self.successes[self.calls - 1] if self.calls <= len(self.successes) else self.success
         return LLMResponse(
-            success=self.success,
-            content=self.content,
-            error=None if self.success else "mock llm failed",
-            metadata={"mock": True},
+            success=success,
+            content=content,
+            error=None if success else "mock llm failed",
+            metadata={"mock": True, "model": "fake-model", "provider": "fake"},
         )
 
 
@@ -133,7 +144,9 @@ async def test_parse_async_falls_back_when_llm_returns_invalid_json():
     assert result["intent"] == "general_chat"
     assert result["metadata"]["source"] == "rule_fallback"
     assert result["metadata"]["llm_error_type"] == "json_parse_failed"
-    assert llm_client.calls == 1
+    assert result["metadata"]["json_repair_attempted"] is True
+    assert result["metadata"]["json_repair_success"] is False
+    assert llm_client.calls == 2
 
 
 @pytest.mark.asyncio
@@ -161,4 +174,88 @@ async def test_parse_async_falls_back_when_llm_schema_invalid():
     assert result["intent"] == "general_chat"
     assert result["metadata"]["source"] == "rule_fallback"
     assert result["metadata"]["llm_error_type"] == "schema_validation_failed"
-    assert llm_client.calls == 1
+    assert result["metadata"]["json_repair_attempted"] is True
+    assert result["metadata"]["json_repair_success"] is False
+    assert llm_client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_parse_async_repairs_malformed_json_once():
+    """Malformed JSON can be repaired once before falling back."""
+    repaired_content = """
+    {
+      "intent": "travel_plan",
+      "entities": {
+        "origin": null,
+        "destination": "杭州",
+        "departure_date": null,
+        "return_date": null,
+        "duration": 2,
+        "budget": null,
+        "travelers": null,
+        "preferences": ["美食"]
+      },
+      "confidence": 0.76,
+      "missing_slots": ["origin", "departure_date"],
+      "followup_question": null
+    }
+    """
+    llm_client = FakeLLMClient(contents=["{bad json", repaired_content])
+    parser = IntentParser(llm_client=llm_client)
+
+    result = await parser.parse_async("帮我找个周末美食旅行地")
+
+    assert result["intent"] == "travel_plan"
+    assert result["entities"]["destination"] == "杭州"
+    assert result["metadata"]["source"] == "llm"
+    assert result["metadata"]["json_repair_attempted"] is True
+    assert result["metadata"]["json_repair_success"] is True
+    assert llm_client.calls == 2
+    assert llm_client.last_request.metadata["repair_for"] == "structured_json"
+
+
+@pytest.mark.asyncio
+async def test_parse_async_repairs_schema_invalid_json_once():
+    """Schema-invalid JSON can be repaired once before falling back."""
+    repaired_content = """
+    {
+      "intent": "policy_query",
+      "entities": {
+        "origin": null,
+        "destination": null,
+        "departure_date": null,
+        "return_date": null,
+        "duration": null,
+        "budget": null,
+        "travelers": null,
+        "preferences": []
+      },
+      "confidence": 0.68,
+      "missing_slots": [],
+      "followup_question": null
+    }
+    """
+    llm_client = FakeLLMClient(contents=['{"intent": "unknown", "entities": {}}', repaired_content])
+    parser = IntentParser(llm_client=llm_client)
+
+    result = await parser.parse_async("我想找个地方散散心")
+
+    assert result["intent"] == "policy_query"
+    assert result["metadata"]["source"] == "llm"
+    assert result["metadata"]["json_repair_attempted"] is True
+    assert result["metadata"]["json_repair_success"] is True
+    assert llm_client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_parse_async_does_not_leak_content_when_repair_fails():
+    """Repair failure metadata should not expose raw malformed model output."""
+    llm_client = FakeLLMClient(contents=["not json with sk-test-secret", "still not json"])
+    parser = IntentParser(llm_client=llm_client)
+
+    result = await parser.parse_async("随便推荐一个地方散散心")
+
+    assert result["metadata"]["source"] == "rule_fallback"
+    assert result["metadata"]["json_repair_attempted"] is True
+    assert "sk-test-secret" not in str(result)
+    assert llm_client.calls == 2

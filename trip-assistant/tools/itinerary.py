@@ -6,6 +6,7 @@ import json
 from typing import Dict, List, Optional
 
 from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.llm.json_repair import parse_llm_json_object
 from core.llm.prompts import ITINERARY_GENERATION_SYSTEM_PROMPT
 from models.itinerary import LLMItineraryPlan
 from tools.registry import BaseTool
@@ -156,7 +157,7 @@ class ItineraryTool(BaseTool):
         if not response.success:
             return None
 
-        parsed_json = self._parse_llm_json(response.content)
+        parsed_json = parse_llm_json_object(response.content)
         if not parsed_json:
             return None
 
@@ -170,26 +171,6 @@ class ItineraryTool(BaseTool):
         if any(day.day != index for index, day in enumerate(plan.itinerary, start=1)):
             return None
         return plan
-
-    def _parse_llm_json(self, content: str) -> Optional[Dict]:
-        """解析LLM返回的JSON，兼容Markdown代码块"""
-        if not content:
-            return None
-
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        return data if isinstance(data, dict) else None
 
     def _build_result(
         self,

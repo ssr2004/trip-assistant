@@ -8,6 +8,7 @@ import re
 from typing import Dict, List, Optional
 
 from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.llm.json_repair import parse_or_repair_json_object
 from core.llm.prompts import INTENT_FALLBACK_SYSTEM_PROMPT
 from models.intent import TravelIntent
 
@@ -382,52 +383,41 @@ class IntentParser:
             }
             return None
 
-        parsed_json = self._parse_llm_json(response.content)
-        if not parsed_json:
+        structured_result = await parse_or_repair_json_object(
+            response.content,
+            llm_client=self.llm_client,
+            validator=TravelIntent.model_validate,
+            repair_instructions=(
+                "Return a JSON object with fields: intent, entities, confidence, "
+                "missing_slots, followup_question. intent must be one of: "
+                "travel_plan, flight_search, hotel_search, attraction_search, "
+                "policy_query, guide_query, dynamic_knowledge_query, itinerary_revision, "
+                "weather_query, general_chat. entities must include: origin, destination, "
+                "departure_date, return_date, duration, budget, travelers, preferences."
+            ),
+            metadata={"fallback_for": "intent_parse"},
+        )
+        if not structured_result.success:
             rule_result["metadata"] = {
                 "source": "rule_fallback",
-                "llm_error_type": "json_parse_failed",
+                "llm_error_type": structured_result.error_type,
                 "llm_model": response.metadata.get("model"),
+                "json_repair_attempted": structured_result.repair_attempted,
+                "json_repair_success": structured_result.repair_success,
+                "json_repair_error_type": structured_result.repair_error_type,
             }
             return None
 
-        try:
-            validated = TravelIntent.model_validate(parsed_json)
-        except Exception:
-            rule_result["metadata"] = {
-                "source": "rule_fallback",
-                "llm_error_type": "schema_validation_failed",
-                "llm_model": response.metadata.get("model"),
-            }
-            return None
-
+        validated = structured_result.validated
         result = self._normalize_llm_intent(validated)
         result["metadata"] = {
             "source": "llm",
             "llm_model": response.metadata.get("model"),
             "provider": response.metadata.get("provider"),
+            "json_repair_attempted": structured_result.repair_attempted,
+            "json_repair_success": structured_result.repair_success,
         }
         return result
-
-    def _parse_llm_json(self, content: str) -> Optional[Dict]:
-        """解析LLM返回的JSON，兼容Markdown代码块"""
-        if not content:
-            return None
-
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        return data if isinstance(data, dict) else None
 
     def _normalize_llm_intent(self, intent: TravelIntent) -> Dict:
         """规范化LLM解析结果，补齐缺失槽位和追问"""

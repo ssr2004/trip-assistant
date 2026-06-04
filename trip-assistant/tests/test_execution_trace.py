@@ -63,3 +63,28 @@ def test_execution_trace_includes_failure_error_type():
     assert failed_step["status"] == "failed"
     assert failed_step["error_type"] == "missing_tool"
     assert failed_step["execution_mode"] == "tool"
+
+
+def test_execution_trace_includes_intent_json_repair_metadata():
+    agent = TravelAgent()
+
+    trace = agent._build_execution_trace({
+        "intent": {
+            "intent": "travel_plan",
+            "confidence": 0.8,
+            "metadata": {
+                "source": "llm",
+                "json_repair_attempted": True,
+                "json_repair_success": True,
+            },
+        },
+        "tasks": [],
+        "task_results": [],
+        "rag_context": [],
+    })
+
+    intent_step = next(step for step in trace["steps"] if step["stage"] == "intent")
+    assert intent_step["execution_mode"] == "llm"
+    assert "json_repair=success" in intent_step["detail"]
+    assert trace["summary"]["json_repair_attempted"] is True
+    assert trace["summary"]["json_repair_success"] is True

@@ -1012,6 +1012,9 @@ class TravelAgent:
         intent_detail = f"confidence={confidence:.2f}" if isinstance(confidence, (int, float)) else None
         if intent_metadata.get("llm_error_type"):
             intent_detail = f"{intent_detail or ''}, llm_error={intent_metadata.get('llm_error_type')}".lstrip(", ")
+        if intent_metadata.get("json_repair_attempted"):
+            repair_state = "success" if intent_metadata.get("json_repair_success") else "failed"
+            intent_detail = f"{intent_detail or ''}, json_repair={repair_state}".lstrip(", ")
         steps.append({
             "stage": "intent",
             "label": intent_type,
@@ -1073,6 +1076,8 @@ class TravelAgent:
             "intent_source": intent_source,
             "llm_mode": "real_llm" if self.intent_parser.llm_client.available else "rule_fallback",
             "llm_model": self.intent_parser.llm_client.settings.LLM_MODEL,
+            "json_repair_attempted": bool(intent_metadata.get("json_repair_attempted")),
+            "json_repair_success": bool(intent_metadata.get("json_repair_success")),
             "task_count": len(tasks),
             "tool_count": sum(1 for task in tasks if task.get("tool")),
             "failed_count": sum(1 for result in task_results if not result.get("success")),
