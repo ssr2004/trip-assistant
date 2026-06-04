@@ -122,8 +122,9 @@ class ResponseBuilder:
 
         attractions_result = self._find_result_by_tool(task_results, "search_attractions")
         attractions = self._tool_items(attractions_result, "attractions") if attractions_result else []
+        attraction_sources = self._tool_items(attractions_result, "rag_documents") if attractions_result else []
         if attractions:
-            lines.extend(self._format_attractions(attractions, section_title="四、景点推荐"))
+            lines.extend(self._format_attractions(attractions, section_title="四、景点推荐", sources=attraction_sources))
 
         itinerary = itinerary_data.get("itinerary", [])
         if itinerary:
@@ -191,7 +192,8 @@ class ResponseBuilder:
             return "\n".join([f"为您找到以下{title}：", *self._format_hotels(hotels, section_title=None)])
         if tool_name == "search_attractions":
             attractions = self._tool_items(result, "attractions")
-            return "\n".join([f"为您找到以下{title}：", *self._format_attractions(attractions, section_title=None)])
+            sources = self._tool_items(result, "rag_documents")
+            return "\n".join([f"为您找到以下{title}：", *self._format_attractions(attractions, section_title=None, sources=sources)])
 
         return self._format_generic_response(task_results)
 
@@ -324,8 +326,13 @@ class ResponseBuilder:
             )
         return lines
 
-    def _format_attractions(self, attractions: List[Dict], section_title: Optional[str]) -> List[str]:
-        """格式化景点列表"""
+    def _format_attractions(
+        self,
+        attractions: List[Dict],
+        section_title: Optional[str],
+        sources: Optional[List[Dict]] = None,
+    ) -> List[str]:
+        """格式化景点列表，并展示外部POI的RAG来源"""
         lines = ["", section_title] if section_title else []
         for index, attraction in enumerate((attractions or [])[:4], start=1):
             lines.append(
@@ -333,6 +340,10 @@ class ResponseBuilder:
                 f"评分{attraction.get('rating', '暂无')}，门票{attraction.get('ticket_price', '待定')}。"
                 f"{attraction.get('description', '')}"
             )
+        if sources:
+            lines.append("资料来源：")
+            for source in sources[:3]:
+                lines.append(self._format_source_reference(source, "外部景点数据"))
         return lines
 
     def _format_itinerary(self, itinerary: List[Dict], section_title: str) -> List[str]:

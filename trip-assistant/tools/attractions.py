@@ -5,6 +5,7 @@
 from typing import Dict, List, Optional
 
 from core.amap_client import AMapPOIClient
+from rag.document_adapter import RAGDocumentAdapter
 from tools.registry import BaseTool
 
 
@@ -14,6 +15,7 @@ class AttractionTool(BaseTool):
     def __init__(self, amap_client: Optional[AMapPOIClient] = None):
         """初始化景点工具"""
         self.amap_client = amap_client or AMapPOIClient()
+        self.rag_adapter = RAGDocumentAdapter()
 
     @property
     def name(self) -> str:
@@ -47,7 +49,9 @@ class AttractionTool(BaseTool):
         )
         pois = self._extract_pois(api_result)
         if api_result.get("success") and pois:
-            attractions = [self._normalize_poi(poi, index) for index, poi in enumerate(pois[:4], start=1)]
+            selected_pois = pois[:4]
+            attractions = [self._normalize_poi(poi, index) for index, poi in enumerate(selected_pois, start=1)]
+            rag_documents = [self.rag_adapter.from_amap_poi(poi) for poi in selected_pois]
             api_metadata = api_result.get("metadata", {}) or {}
             is_mock = api_metadata.get("mock", False)
             return self.success_result(
@@ -55,6 +59,7 @@ class AttractionTool(BaseTool):
                     "location": location,
                     "keywords": keywords or [],
                     "attractions": attractions,
+                    "rag_documents": rag_documents,
                 },
                 metadata={
                     "source": "amap_poi_mock" if is_mock else "amap_poi",
@@ -70,6 +75,7 @@ class AttractionTool(BaseTool):
                 "location": location,
                 "keywords": keywords or [],
                 "attractions": attractions,
+                "rag_documents": [],
             },
             metadata={
                 "source": "mock_attraction_data",

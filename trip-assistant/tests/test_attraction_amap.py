@@ -32,12 +32,18 @@ async def test_attraction_tool_uses_amap_mock_without_key():
     assert result["metadata"]["provider"] == "amap"
     assert result["metadata"]["mock"] is True
     assert len(result["data"]["attractions"]) == 4
+    assert len(result["data"]["rag_documents"]) == 4
     first_attraction = result["data"]["attractions"][0]
+    first_document = result["data"]["rag_documents"][0]
     assert first_attraction["name"] == "西湖"
     assert first_attraction["category"] == "风景名胜"
     assert first_attraction["ticket_price"] == "待定"
     assert first_attraction["source"] == "amap"
     assert "来自高德POI" in first_attraction["description"]
+    assert first_document["title"] == "西湖"
+    assert first_document["type"] == "attraction"
+    assert first_document["source"].startswith("api/amap/attraction/")
+    assert first_document["metadata"]["provider"] == "amap"
 
 
 @pytest.mark.asyncio
@@ -87,6 +93,10 @@ async def test_attraction_tool_normalizes_real_amap_response():
     assert attraction["rating"] == 4.7
     assert attraction["address"] == "测试地址"
     assert attraction["location"] == "120.1,30.1"
+    rag_document = result["data"]["rag_documents"][0]
+    assert rag_document["title"] == "测试景点"
+    assert rag_document["source"] == "api/amap/attraction/real-poi-1"
+    assert "- 地址：测试地址" in rag_document["content"]
 
 
 @pytest.mark.asyncio
@@ -107,3 +117,4 @@ async def test_attraction_tool_falls_back_to_local_mock_when_amap_returns_empty(
     assert result["metadata"]["mock"] is True
     assert result["metadata"]["fallback_reason"] == "amap_poi_empty"
     assert result["data"]["attractions"][0]["name"] == "西湖"
+    assert result["data"]["rag_documents"] == []

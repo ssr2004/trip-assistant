@@ -54,6 +54,17 @@ async def test_hotel_search(agent):
 
 
 @pytest.mark.asyncio
+async def test_attraction_search_shows_external_rag_source(agent):
+    """测试景点查询展示外部POI来源"""
+    response = await agent.arun("杭州有什么好玩的", "test-session-attraction-source")
+    assert response is not None
+    assert "景点推荐" in response
+    assert "西湖" in response
+    assert "资料来源" in response
+    assert "api/amap/attraction" in response
+
+
+@pytest.mark.asyncio
 async def test_agent_propagates_tool_failure(agent):
     """Agent执行器可以识别工具内部失败状态"""
     result = await agent._execute_tasks({

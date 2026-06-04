@@ -200,6 +200,51 @@ def test_build_policy_response():
     assert "flight_policy.md" in response
 
 
+def test_build_single_attraction_response_shows_external_sources():
+    """单独景点查询展示外部POI来源"""
+    builder = ResponseBuilder()
+    response = builder.build(
+        intent={"intent": "attraction_search"},
+        task_results=[
+            {
+                "task": {"task_type": "tool_call", "tool": "search_attractions", "name": "搜索景点"},
+                "success": True,
+                "result": {
+                    "success": True,
+                    "data": {
+                        "attractions": [
+                            {
+                                "name": "西湖",
+                                "category": "风景名胜",
+                                "rating": 4.8,
+                                "ticket_price": "待定",
+                                "description": "来自高德POI：杭州市西湖区。",
+                            }
+                        ],
+                        "rag_documents": [
+                            {
+                                "title": "西湖",
+                                "source": "api/amap/attraction/mock-西湖",
+                                "type": "attraction",
+                                "metadata": {"provider": "amap"},
+                            }
+                        ],
+                    },
+                    "error": None,
+                    "metadata": {"tool": "search_attractions"},
+                },
+                "error": None,
+            }
+        ],
+    )
+
+    assert "景点推荐" in response
+    assert "西湖" in response
+    assert "资料来源" in response
+    assert "api/amap/attraction/mock-西湖" in response
+
+
+
 def test_build_single_flight_response_cleans_none_time():
     """单独航班查询不暴露None时间"""
     builder = ResponseBuilder()
