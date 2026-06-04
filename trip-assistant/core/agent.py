@@ -901,6 +901,11 @@ class TravelAgent:
 
     async def arun(self, message: str, session_id: str) -> str:
         """异步运行Agent"""
+        result = await self.arun_with_artifacts(message, session_id)
+        return result["response"]
+
+    async def arun_with_artifacts(self, message: str, session_id: str) -> Dict[str, Any]:
+        """异步运行Agent，并返回可供前端展示的结构化结果"""
         config = {"configurable": {"thread_id": session_id}}
 
         initial_state = {
@@ -916,9 +921,80 @@ class TravelAgent:
 
         result = await self.graph.ainvoke(initial_state, config)
 
+        response = "处理完成"
         if result.get("messages"):
-            return result["messages"][-1].content
-        return "处理完成"
+            response = result["messages"][-1].content
+
+        return {
+            "response": response,
+            "artifacts": self._build_response_artifacts(result.get("task_results", [])),
+        }
+
+    def _build_response_artifacts(self, task_results: List[Dict]) -> Dict[str, Any]:
+        """从任务结果中提取前端可视化展示数据"""
+        artifacts: Dict[str, Any] = {}
+
+        for task_result in task_results or []:
+            task = task_result.get("task", {}) or {}
+            task_type = task.get("task_type")
+            tool_name = task.get("tool")
+            data = self._extract_result_data(task_result)
+            if not isinstance(data, dict):
+                continue
+
+            if tool_name == "generate_itinerary" and data.get("itinerary"):
+                artifacts["itinerary"] = self._build_itinerary_artifact(data, title="每日行程")
+
+            if tool_name == "search_attractions" and data.get("attractions"):
+                artifacts["attractions"] = {
+                    "location": data.get("location"),
+                    "items": data.get("attractions", [])[:4],
+                    "sources": data.get("rag_documents", [])[:3],
+                }
+
+            if tool_name == "get_weather_forecast" and data.get("forecasts"):
+                artifacts["weather"] = {
+                    "city": data.get("city"),
+                    "forecasts": data.get("forecasts", []),
+                    "travel_advice": data.get("travel_advice", []),
+                }
+
+            if tool_name == "optimize_route_order" and data.get("segments"):
+                artifacts["route"] = self._build_route_artifact(data)
+
+            if task_type == "revise_itinerary":
+                if data.get("itinerary"):
+                    artifacts["itinerary"] = self._build_itinerary_artifact(data, title="调整后的每日行程")
+                if data.get("route_summary"):
+                    artifacts["route"] = self._build_route_artifact(data.get("route_summary", {}))
+                if data.get("weather_summary"):
+                    artifacts["weather_adjustment"] = data.get("weather_summary")
+
+        return artifacts
+
+    def _build_itinerary_artifact(self, data: Dict[str, Any], title: str) -> Dict[str, Any]:
+        """构建行程展示数据"""
+        return {
+            "title": title,
+            "origin": data.get("origin"),
+            "destination": data.get("destination"),
+            "duration": data.get("duration"),
+            "budget": data.get("budget"),
+            "summary": data.get("summary"),
+            "days": copy.deepcopy(data.get("itinerary", [])),
+            "budget_summary": copy.deepcopy(data.get("budget_summary", {})),
+        }
+
+    def _build_route_artifact(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """构建路线展示数据"""
+        return {
+            "day": data.get("day"),
+            "ordered_places": copy.deepcopy(data.get("ordered_places", [])),
+            "segments": copy.deepcopy(data.get("segments", [])),
+            "total_distance": data.get("total_distance", 0),
+            "total_duration": data.get("total_duration", 0),
+            "mode": data.get("mode"),
+        }
 
     async def astream(self, message: str, session_id: str) -> AsyncGenerator[str, None]:
         """流式运行Agent"""

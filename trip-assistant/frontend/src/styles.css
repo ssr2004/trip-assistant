@@ -190,8 +190,12 @@ button:disabled {
   justify-content: flex-start;
 }
 
+.message-stack {
+  width: min(820px, 86%);
+}
+
 .message-bubble {
-  max-width: min(760px, 82%);
+  max-width: 100%;
   padding: 12px 14px;
   border-radius: 8px;
   font-size: 14px;
@@ -213,6 +217,110 @@ button:disabled {
 
 .message-bubble.pending {
   color: #607287;
+}
+
+.artifact-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.artifact-card {
+  padding: 14px;
+  background: #ffffff;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+}
+
+.artifact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.artifact-header strong {
+  color: #17202a;
+  font-size: 14px;
+}
+
+.artifact-header span {
+  color: #607287;
+  font-size: 12px;
+  text-align: right;
+}
+
+.day-grid,
+.attraction-grid,
+.weather-list {
+  display: grid;
+  gap: 10px;
+}
+
+.day-card,
+.attraction-card,
+.weather-item {
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid #e1e9f1;
+  border-radius: 8px;
+}
+
+.day-card b,
+.attraction-card b,
+.weather-item b {
+  display: block;
+  color: #1e344d;
+  font-size: 13px;
+}
+
+.day-card p {
+  margin: 8px 0 6px;
+  color: #26384d;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.day-card small,
+.attraction-card span,
+.weather-item span {
+  display: block;
+  margin-top: 5px;
+  color: #607287;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.weather-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.weather-item.rainy {
+  border-color: #e0b56a;
+  background: #fff8ec;
+}
+
+.attraction-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compact-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compact-list li {
+  padding: 9px 10px;
+  color: #26384d;
+  background: #f8fafc;
+  border: 1px solid #e1e9f1;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .composer {
@@ -448,6 +556,15 @@ button:disabled {
 
   .message-bubble {
     max-width: 94%;
+  }
+
+  .message-stack {
+    width: 100%;
+  }
+
+  .weather-list,
+  .attraction-grid {
+    grid-template-columns: 1fr;
   }
 
   .composer {

@@ -27,6 +27,7 @@ class ChatResponse(BaseModel):
     """聊天响应协议"""
     session_id: str
     response: str
+    artifacts: dict = Field(default_factory=dict)
 
 
 class ExternalServiceStatus(BaseModel):
@@ -96,9 +97,15 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="消息不能为空")
 
     # 调用Agent处理
-    response = await agent.arun(message, session_id)
+    if hasattr(agent, "arun_with_artifacts"):
+        result = await agent.arun_with_artifacts(message, session_id)
+        response = result.get("response", "处理完成")
+        artifacts = result.get("artifacts", {})
+    else:
+        response = await agent.arun(message, session_id)
+        artifacts = {}
 
-    return ChatResponse(session_id=session_id, response=response)
+    return ChatResponse(session_id=session_id, response=response, artifacts=artifacts)
 
 
 @app.get("/api/external/status", response_model=ExternalStatusResponse)

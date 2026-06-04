@@ -30,6 +30,7 @@ const messages = ref([
     role: "assistant",
     content:
       "您好，我是 TravelMind。可以输入完整旅行需求，也可以用右侧快捷脚本演示多轮规划、路线优化和雨天调整。",
+    artifacts: {},
   },
 ]);
 const messagesPanel = ref(null);
@@ -97,11 +98,12 @@ function capabilityLabel(capability) {
   return labels[capability] || capability;
 }
 
-function addMessage(role, content) {
+function addMessage(role, content, artifacts = {}) {
   messages.value.push({
     id: crypto.randomUUID(),
     role,
     content,
+    artifacts: artifacts || {},
   });
   nextTick(() => {
     if (messagesPanel.value) {
@@ -138,7 +140,7 @@ async function submitMessage(messageOverride = "") {
       sessionId.value = data.session_id;
       window.localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
     }
-    addMessage("assistant", data.response || "处理完成");
+    addMessage("assistant", data.response || "处理完成", data.artifacts || {});
   } catch (error) {
     addMessage("assistant", error.message || "抱歉，处理请求时出现错误。");
   } finally {
@@ -158,8 +160,29 @@ function newSession() {
       id: crypto.randomUUID(),
       role: "assistant",
       content: "已开启新会话。请输入新的旅行需求，系统会在首轮请求后创建新的 session_id。",
+      artifacts: {},
     },
   ];
+}
+
+function hasArtifacts(message) {
+  return message.role === "assistant" && message.artifacts && Object.keys(message.artifacts).length > 0;
+}
+
+function formatDistance(distance) {
+  const meters = Number(distance || 0);
+  if (meters >= 1000) {
+    return `${(meters / 1000).toFixed(1)} 公里`;
+  }
+  return `${Math.round(meters)} 米`;
+}
+
+function formatDuration(duration) {
+  const seconds = Number(duration || 0);
+  if (!seconds) {
+    return "0 分钟";
+  }
+  return `${Math.max(Math.round(seconds / 60), 1)} 分钟`;
 }
 
 onMounted(() => {
@@ -200,8 +223,100 @@ onMounted(() => {
 
         <div ref="messagesPanel" class="messages-panel">
           <article v-for="message in messages" :key="message.id" class="message-row" :class="message.role">
-            <div class="message-bubble">
-              {{ message.content }}
+            <div class="message-stack">
+              <div class="message-bubble">
+                {{ message.content }}
+              </div>
+
+              <div v-if="hasArtifacts(message)" class="artifact-panel">
+                <section v-if="message.artifacts.itinerary" class="artifact-card itinerary-card">
+                  <div class="artifact-header">
+                    <strong>{{ message.artifacts.itinerary.title || "每日行程" }}</strong>
+                    <span v-if="message.artifacts.itinerary.destination">
+                      {{ message.artifacts.itinerary.destination }}
+                    </span>
+                  </div>
+                  <div class="day-grid">
+                    <article
+                      v-for="day in message.artifacts.itinerary.days"
+                      :key="day.day"
+                      class="day-card"
+                    >
+                      <b>Day {{ day.day }} · {{ day.title }}</b>
+                      <p v-if="day.activities?.length">{{ day.activities.join(" -> ") }}</p>
+                      <small v-if="day.notes">{{ day.notes }}</small>
+                    </article>
+                  </div>
+                </section>
+
+                <section v-if="message.artifacts.weather" class="artifact-card">
+                  <div class="artifact-header">
+                    <strong>{{ message.artifacts.weather.city || "目的地" }}天气</strong>
+                    <span>旅行建议</span>
+                  </div>
+                  <div class="weather-list">
+                    <article
+                      v-for="forecast in message.artifacts.weather.forecasts"
+                      :key="forecast.date"
+                      class="weather-item"
+                      :class="{ rainy: forecast.suitable_for_outdoor === false }"
+                    >
+                      <b>{{ forecast.date }}</b>
+                      <span>{{ forecast.weather }} · {{ forecast.temperature }}</span>
+                    </article>
+                  </div>
+                </section>
+
+                <section v-if="message.artifacts.weather_adjustment" class="artifact-card">
+                  <div class="artifact-header">
+                    <strong>雨天调整依据</strong>
+                    <span>{{ message.artifacts.weather_adjustment.city || "目的地" }}</span>
+                  </div>
+                  <ul class="compact-list">
+                    <li
+                      v-for="item in message.artifacts.weather_adjustment.adjusted_days || []"
+                      :key="`${item.day}-${item.date}`"
+                    >
+                      第{{ item.day }}天：{{ item.weather }}，{{ item.advice }}
+                    </li>
+                  </ul>
+                </section>
+
+                <section v-if="message.artifacts.route" class="artifact-card">
+                  <div class="artifact-header">
+                    <strong>路线优化摘要</strong>
+                    <span>
+                      {{ formatDistance(message.artifacts.route.total_distance) }} /
+                      {{ formatDuration(message.artifacts.route.total_duration) }}
+                    </span>
+                  </div>
+                  <ul class="compact-list">
+                    <li
+                      v-for="segment in message.artifacts.route.segments || []"
+                      :key="`${segment.from}-${segment.to}`"
+                    >
+                      {{ segment.from }} -> {{ segment.to }}：{{ formatDistance(segment.distance) }}
+                    </li>
+                  </ul>
+                </section>
+
+                <section v-if="message.artifacts.attractions" class="artifact-card">
+                  <div class="artifact-header">
+                    <strong>景点推荐</strong>
+                    <span>{{ message.artifacts.attractions.location || "目的地" }}</span>
+                  </div>
+                  <div class="attraction-grid">
+                    <article
+                      v-for="item in message.artifacts.attractions.items || []"
+                      :key="item.id || item.name"
+                      class="attraction-card"
+                    >
+                      <b>{{ item.name }}</b>
+                      <span>{{ item.category }} · {{ item.rating || "暂无评分" }}</span>
+                    </article>
+                  </div>
+                </section>
+              </div>
             </div>
           </article>
           <article v-if="loading" class="message-row assistant">

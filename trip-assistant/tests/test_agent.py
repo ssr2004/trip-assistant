@@ -37,6 +37,30 @@ async def test_complete_travel_plan_response(agent):
 
 
 @pytest.mark.asyncio
+async def test_agent_returns_itinerary_artifact(agent):
+    """Agent可返回前端展示用的结构化行程数据"""
+    result = await agent.arun_with_artifacts("我要从郑州去杭州玩三天，预算3000，6月10日出发", "test-session-artifact-plan")
+
+    assert "已为您规划郑州到杭州的3天旅行方案" in result["response"]
+    itinerary = result["artifacts"]["itinerary"]
+    assert itinerary["destination"] == "杭州"
+    assert len(itinerary["days"]) == 3
+    assert itinerary["days"][0]["day"] == 1
+    assert "budget_summary" in itinerary
+
+
+@pytest.mark.asyncio
+async def test_agent_returns_weather_artifact(agent):
+    """Agent可返回前端展示用的结构化天气数据"""
+    result = await agent.arun_with_artifacts("杭州明天天气怎么样？", "test-session-artifact-weather")
+
+    weather = result["artifacts"]["weather"]
+    assert weather["city"] == "杭州"
+    assert len(weather["forecasts"]) == 3
+    assert weather["travel_advice"]
+
+
+@pytest.mark.asyncio
 async def test_flight_search(agent):
     """测试航班搜索"""
     response = await agent.arun("搜索从北京到上海的航班", "test-session-2")

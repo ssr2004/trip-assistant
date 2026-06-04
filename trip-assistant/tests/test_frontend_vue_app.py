@@ -35,6 +35,18 @@ def test_frontend_calls_chat_and_external_status_apis():
     assert 'fetch("/api/external/status")' in api_js
     assert "travelMindSessionId" in app_vue
     assert "newSession" in app_vue
+    assert "data.artifacts" in app_vue
+
+
+def test_frontend_renders_structured_artifacts():
+    """前端包含行程、天气、路线和景点结构化展示"""
+    app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+
+    assert "message.artifacts.itinerary" in app_vue
+    assert "message.artifacts.weather" in app_vue
+    assert "message.artifacts.weather_adjustment" in app_vue
+    assert "message.artifacts.route" in app_vue
+    assert "message.artifacts.attractions" in app_vue
 
 
 def test_frontend_avoids_raw_html_rendering():

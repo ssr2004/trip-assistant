@@ -19,6 +19,22 @@ class FakeAgent:
         return f"已处理：{message}"
 
 
+class FakeArtifactAgent(FakeAgent):
+    """支持结构化结果的测试Agent替身"""
+
+    async def arun_with_artifacts(self, message: str, session_id: str):
+        self.calls.append({"message": message, "session_id": session_id})
+        return {
+            "response": f"已处理：{message}",
+            "artifacts": {
+                "itinerary": {
+                    "destination": "杭州",
+                    "days": [{"day": 1, "title": "西湖初体验", "activities": ["西湖"]}],
+                }
+            },
+        }
+
+
 def make_client(monkeypatch):
     fake_agent = FakeAgent()
     monkeypatch.setattr(app_main, "agent", fake_agent)
@@ -82,3 +98,18 @@ def test_chat_rejects_empty_message(monkeypatch):
     assert response.status_code == 400
     assert response.json()["detail"] == "消息不能为空"
     assert fake_agent.calls == []
+
+
+def test_chat_returns_artifacts_when_agent_provides_them(monkeypatch):
+    """聊天接口透传Agent结构化展示数据"""
+    fake_agent = FakeArtifactAgent()
+    monkeypatch.setattr(app_main, "agent", fake_agent)
+    client = TestClient(app_main.app)
+
+    response = client.post("/api/chat", json={"message": "生成行程", "session_id": "artifact-session"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["response"] == "已处理：生成行程"
+    assert data["artifacts"]["itinerary"]["destination"] == "杭州"
+    assert data["artifacts"]["itinerary"]["days"][0]["title"] == "西湖初体验"
