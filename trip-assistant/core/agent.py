@@ -254,6 +254,14 @@ class TravelAgent:
             "error_type": error_type or self._resolve_error_type(task_result),
             "result_summary": self._summarize_trace_result(task_result, data),
         }
+        recovery_metadata = self._resolve_recovery_metadata(
+            task_result=task_result,
+            data=data,
+            error_type=meta["error_type"],
+            execution_mode=meta["execution_mode"],
+            dependency_metadata=dependency_metadata,
+        )
+        meta.update(recovery_metadata)
         if dependency_metadata and dependency_metadata.get("dependency_ids"):
             meta.update({
                 "dependency_ids": dependency_metadata.get("dependency_ids", []),
@@ -305,6 +313,144 @@ class TravelAgent:
         if metadata.get("mock") is True:
             return "mock_fallback_error"
         return "task_failed"
+
+    def _resolve_recovery_metadata(
+        self,
+        task_result: Dict[str, Any],
+        data: Any,
+        error_type: str | None,
+        execution_mode: str,
+        dependency_metadata: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        """Classify task recovery and degradation without changing tool contracts."""
+        result = task_result.get("result")
+        metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
+        dependency_error_count = 0
+        if dependency_metadata:
+            dependency_error_count = int(dependency_metadata.get("dependency_error_count") or 0)
+
+        success = bool(task_result.get("success"))
+        fallback_used = success and self._task_used_fallback(metadata, execution_mode)
+        dependency_degraded = dependency_error_count > 0
+        failure_category = None
+        if not success:
+            failure_category = self._classify_task_failure(task_result, data, metadata, error_type)
+        elif dependency_degraded:
+            failure_category = "dependency_failed"
+
+        degraded = bool(not success or fallback_used or dependency_degraded)
+        recoverable = degraded and failure_category != "missing_tool"
+        recovery_strategy = self._resolve_recovery_strategy(
+            success=success,
+            fallback_used=fallback_used,
+            dependency_degraded=dependency_degraded,
+            failure_category=failure_category,
+        )
+        return {
+            "failure_category": failure_category,
+            "recoverable": recoverable,
+            "degraded": degraded,
+            "fallback_used": fallback_used,
+            "recovery_strategy": recovery_strategy,
+            "degradation_reason": self._resolve_degradation_reason(
+                success=success,
+                fallback_used=fallback_used,
+                dependency_degraded=dependency_degraded,
+                failure_category=failure_category,
+            ),
+        }
+
+    def _task_used_fallback(self, metadata: Dict[str, Any], execution_mode: str) -> bool:
+        """Detect provider fallback from sanitized metadata only."""
+        source = str(metadata.get("source") or "")
+        if metadata.get("fallback_reason"):
+            return True
+        if metadata.get("mock") is True:
+            return True
+        if execution_mode == "mock_fallback":
+            return True
+        return "mock" in source
+
+    def _classify_task_failure(
+        self,
+        task_result: Dict[str, Any],
+        data: Any,
+        metadata: Dict[str, Any],
+        error_type: str | None,
+    ) -> str:
+        """Map heterogeneous tool failures into stable executor categories."""
+        error_text = str(task_result.get("error") or "").lower()
+        if error_type == "missing_tool":
+            return "missing_tool"
+        if self._looks_like_missing_params(error_text):
+            return "missing_required_params"
+        source = str(metadata.get("source") or "").lower()
+        provider = str(metadata.get("provider") or "").lower()
+        if "api" in source or provider in {"amap", "weather"}:
+            return "external_api_error"
+        if error_type and error_type not in {"tool_error", "task_failed", "mock_fallback_error"}:
+            return "exception"
+        if self._result_is_empty(data):
+            return "empty_result"
+        return "tool_error"
+
+    def _looks_like_missing_params(self, error_text: str) -> bool:
+        """Detect user/input-missing failures from existing Chinese and English errors."""
+        missing_markers = [
+            "需要提供",
+            "缺少",
+            "missing",
+            "required",
+            "not provided",
+        ]
+        return any(marker in error_text for marker in missing_markers)
+
+    def _result_is_empty(self, data: Any) -> bool:
+        """Return whether a tool result has no usable structured payload."""
+        if data is None:
+            return True
+        if isinstance(data, list):
+            return len(data) == 0
+        if isinstance(data, dict):
+            if not data:
+                return True
+            list_values = [value for value in data.values() if isinstance(value, list)]
+            return bool(list_values) and all(len(value) == 0 for value in list_values)
+        return False
+
+    def _resolve_recovery_strategy(
+        self,
+        success: bool,
+        fallback_used: bool,
+        dependency_degraded: bool,
+        failure_category: str | None,
+    ) -> str:
+        """Return the executor-level recovery strategy applied to a task."""
+        if fallback_used and success:
+            return "provider_fallback"
+        if dependency_degraded and success:
+            return "partial_dependency_context"
+        if not success and failure_category == "missing_tool":
+            return "record_unrecoverable_error"
+        if not success:
+            return "continue_with_error_context"
+        return "none"
+
+    def _resolve_degradation_reason(
+        self,
+        success: bool,
+        fallback_used: bool,
+        dependency_degraded: bool,
+        failure_category: str | None,
+    ) -> str:
+        """Build a compact reason for trace and metrics."""
+        if fallback_used and success:
+            return "fallback_used"
+        if dependency_degraded and success:
+            return "dependency_context_degraded"
+        if not success:
+            return failure_category or "task_failed"
+        return ""
 
     def _index_task_result(self, task_result: Dict, result_by_task_id: Dict[str, Dict]) -> None:
         """按task_id索引任务结果，供后续依赖任务读取"""
@@ -1156,6 +1302,12 @@ class TravelAgent:
                 "failed_dependencies": meta.get("failed_dependencies"),
                 "dependency_context_keys": meta.get("dependency_context_keys"),
                 "dependency_error_count": meta.get("dependency_error_count"),
+                "failure_category": meta.get("failure_category"),
+                "recoverable": meta.get("recoverable"),
+                "degraded": meta.get("degraded"),
+                "fallback_used": meta.get("fallback_used"),
+                "recovery_strategy": meta.get("recovery_strategy"),
+                "degradation_reason": meta.get("degradation_reason"),
             })
 
         dynamic_source_count = len(dynamic_rag_context.get("sources", []) or [])
@@ -1218,11 +1370,27 @@ class TravelAgent:
         """Aggregate sanitized runtime counters for the trace summary."""
         mode_counts: Dict[str, int] = {}
         tool_total_duration_ms = 0
+        degraded_count = 0
+        recoverable_failure_count = 0
+        fallback_used_count = 0
+        unrecoverable_failure_count = 0
+        recovery_strategy_counts: Dict[str, int] = {}
         for task_result in task_results:
             meta = task_result.get("meta", {}) or {}
             mode = str(meta.get("execution_mode") or "unknown")
             mode_counts[mode] = mode_counts.get(mode, 0) + 1
             tool_total_duration_ms += int(meta.get("duration_ms") or 0)
+            if meta.get("degraded"):
+                degraded_count += 1
+            if meta.get("recoverable") and not task_result.get("success"):
+                recoverable_failure_count += 1
+            if meta.get("fallback_used"):
+                fallback_used_count += 1
+            if task_result.get("success") is False and not meta.get("recoverable"):
+                unrecoverable_failure_count += 1
+            strategy = str(meta.get("recovery_strategy") or "none")
+            if strategy != "none":
+                recovery_strategy_counts[strategy] = recovery_strategy_counts.get(strategy, 0) + 1
 
         llm_total_tokens = int(intent_metadata.get("llm_total_tokens") or 0)
         return {
@@ -1244,6 +1412,11 @@ class TravelAgent:
             "template_task_count": mode_counts.get("template", 0),
             "dynamic_rag_count": mode_counts.get("dynamic_rag", 0),
             "internal_task_count": mode_counts.get("internal_rule", 0) + mode_counts.get("internal_revision", 0),
+            "degraded_count": degraded_count,
+            "recoverable_failure_count": recoverable_failure_count,
+            "fallback_used_count": fallback_used_count,
+            "unrecoverable_failure_count": unrecoverable_failure_count,
+            "recovery_strategy_counts": recovery_strategy_counts,
         }
 
     def _intent_execution_mode(self, source: str) -> str:

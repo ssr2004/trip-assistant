@@ -140,6 +140,61 @@ async def test_agent_keeps_running_when_dependency_fails(agent):
     assert context_summary["dependency_error_count"] == 1
     assert itinerary_result["meta"]["failed_dependencies"] == ["search_flights_1"]
     assert itinerary_result["meta"]["dependency_error_count"] == 1
+    assert flight_result["meta"]["failure_category"] == "missing_required_params"
+    assert flight_result["meta"]["recoverable"] is True
+    assert flight_result["meta"]["degraded"] is True
+    assert flight_result["meta"]["fallback_used"] is False
+    assert flight_result["meta"]["recovery_strategy"] == "continue_with_error_context"
+    assert itinerary_result["meta"]["failure_category"] == "dependency_failed"
+    assert itinerary_result["meta"]["recoverable"] is True
+    assert itinerary_result["meta"]["degraded"] is True
+    assert itinerary_result["meta"]["recovery_strategy"] == "partial_dependency_context"
+
+
+@pytest.mark.asyncio
+async def test_agent_recovers_when_tool_raises_exception(agent):
+    """工具抛异常时 Executor 记录可恢复失败，并继续执行依赖下游任务。"""
+    original_registry = agent.tool_registry
+
+    class FailingAttractionRegistry:
+        async def execute(self, tool_name, params):
+            if tool_name == "search_attractions":
+                raise RuntimeError("provider timeout")
+            return await original_registry.execute(tool_name, params)
+
+    agent.tool_registry = FailingAttractionRegistry()
+    tasks = [
+        {
+            "task_id": "search_attractions_1",
+            "task_type": "tool_call",
+            "name": "搜索景点",
+            "priority": 1,
+            "tool": "search_attractions",
+            "params": {"location": "杭州"},
+            "depends_on": [],
+        },
+        {
+            "task_id": "generate_itinerary_1",
+            "task_type": "generate_itinerary",
+            "name": "生成旅行行程",
+            "priority": 2,
+            "tool": "generate_itinerary",
+            "params": {"origin": "郑州", "destination": "杭州", "duration": 2},
+            "depends_on": ["search_attractions_1"],
+        },
+    ]
+
+    result = await agent._execute_tasks({"tasks": tasks})
+
+    failed_result = result["task_results"][0]
+    itinerary_result = result["task_results"][1]
+    assert failed_result["success"] is False
+    assert failed_result["meta"]["failure_category"] == "exception"
+    assert failed_result["meta"]["recoverable"] is True
+    assert failed_result["meta"]["recovery_strategy"] == "continue_with_error_context"
+    assert itinerary_result["success"] is True
+    assert itinerary_result["meta"]["failed_dependencies"] == ["search_attractions_1"]
+    assert itinerary_result["meta"]["recovery_strategy"] == "partial_dependency_context"
 
 
 def test_dependency_context_does_not_mutate_original_params(agent):

@@ -24,11 +24,17 @@ class TraceStep(BaseModel):
     failed_dependencies: list[str] | None = None
     dependency_context_keys: list[str] | None = None
     dependency_error_count: int | None = None
+    failure_category: str | None = None
+    recoverable: bool | None = None
+    degraded: bool | None = None
+    fallback_used: bool | None = None
+    recovery_strategy: str | None = None
+    degradation_reason: str | None = None
 
 
 class ExecutionTrace(BaseModel):
     steps: list[TraceStep] = Field(default_factory=list)
-    summary: dict[str, int | str | bool | list[str]] = Field(default_factory=dict)
+    summary: dict[str, int | str | bool | list[str] | dict[str, int]] = Field(default_factory=dict)
 
 
 def normalize_execution_trace(value: Any) -> dict[str, Any]:

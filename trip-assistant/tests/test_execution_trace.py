@@ -147,6 +147,9 @@ def test_execution_trace_aggregates_runtime_tool_modes():
     assert trace["summary"]["real_api_count"] == 1
     assert trace["summary"]["mock_fallback_count"] == 1
     assert trace["summary"]["template_task_count"] == 1
+    assert trace["summary"]["degraded_count"] == 0
+    assert trace["summary"]["fallback_used_count"] == 0
+    assert trace["summary"]["recoverable_failure_count"] == 0
 
 
 def test_execution_trace_includes_dependency_resolution_metadata():
@@ -165,6 +168,12 @@ def test_execution_trace_includes_dependency_resolution_metadata():
             "failed_dependencies": [],
             "dependency_context_keys": ["attractions", "weather", "errors"],
             "dependency_error_count": 1,
+            "failure_category": "dependency_failed",
+            "recoverable": True,
+            "degraded": True,
+            "fallback_used": False,
+            "recovery_strategy": "partial_dependency_context",
+            "degradation_reason": "dependency_context_degraded",
         },
     }
 
@@ -182,6 +191,76 @@ def test_execution_trace_includes_dependency_resolution_metadata():
     assert itinerary_step["failed_dependencies"] == []
     assert itinerary_step["dependency_context_keys"] == ["attractions", "weather", "errors"]
     assert itinerary_step["dependency_error_count"] == 1
+    assert itinerary_step["failure_category"] == "dependency_failed"
+    assert itinerary_step["recoverable"] is True
+    assert itinerary_step["degraded"] is True
+    assert itinerary_step["fallback_used"] is False
+    assert itinerary_step["recovery_strategy"] == "partial_dependency_context"
+    assert itinerary_step["degradation_reason"] == "dependency_context_degraded"
+    assert trace["summary"]["degraded_count"] == 1
+    assert trace["summary"]["recoverable_failure_count"] == 0
+    assert trace["summary"]["fallback_used_count"] == 0
+    assert trace["summary"]["recovery_strategy_counts"] == {"partial_dependency_context": 1}
+
+
+def test_execution_trace_summarizes_fallback_and_recoverable_failures():
+    agent = TravelAgent()
+    fallback_result = {
+        "success": True,
+        "task": {"task_type": "tool_call", "tool": "search_attractions", "name": "Attractions"},
+        "result": {"metadata": {"mock": True, "fallback_reason": "amap_poi_empty"}, "data": {"attractions": [1]}},
+        "meta": {
+            "duration_ms": 12,
+            "execution_mode": "mock_fallback",
+            "result_summary": "attractions=1",
+            "failure_category": None,
+            "recoverable": True,
+            "degraded": True,
+            "fallback_used": True,
+            "recovery_strategy": "provider_fallback",
+            "degradation_reason": "fallback_used",
+        },
+    }
+    failed_result = {
+        "success": False,
+        "task": {"task_type": "tool_call", "tool": "search_flights", "name": "Flights"},
+        "result": {"metadata": {"source": "mock_flight_data"}, "data": {"flights": []}},
+        "error": "查询航班需要提供出发地和目的地",
+        "meta": {
+            "duration_ms": 8,
+            "execution_mode": "local_data",
+            "error_type": "tool_error",
+            "result_summary": "查询航班需要提供出发地和目的地",
+            "failure_category": "missing_required_params",
+            "recoverable": True,
+            "degraded": True,
+            "fallback_used": False,
+            "recovery_strategy": "continue_with_error_context",
+            "degradation_reason": "missing_required_params",
+        },
+    }
+
+    trace = agent._build_execution_trace({
+        "intent": {"intent": "travel_plan", "metadata": {"source": "rule"}},
+        "tasks": [fallback_result["task"], failed_result["task"]],
+        "task_results": [fallback_result, failed_result],
+        "rag_context": [],
+    })
+
+    fallback_step = next(step for step in trace["steps"] if step.get("tool") == "search_attractions")
+    failed_step = next(step for step in trace["steps"] if step.get("tool") == "search_flights")
+    assert fallback_step["fallback_used"] is True
+    assert fallback_step["recovery_strategy"] == "provider_fallback"
+    assert failed_step["failure_category"] == "missing_required_params"
+    assert failed_step["recoverable"] is True
+    assert trace["summary"]["degraded_count"] == 2
+    assert trace["summary"]["fallback_used_count"] == 1
+    assert trace["summary"]["recoverable_failure_count"] == 1
+    assert trace["summary"]["unrecoverable_failure_count"] == 0
+    assert trace["summary"]["recovery_strategy_counts"] == {
+        "provider_fallback": 1,
+        "continue_with_error_context": 1,
+    }
 
 
 def test_execution_trace_includes_llm_planner_metadata():
