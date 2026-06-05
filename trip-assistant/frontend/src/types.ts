@@ -115,6 +115,26 @@ export interface TraceStep {
   error_type?: string | null;
   result_summary?: string | null;
   source_count?: number | null;
+  dependency_ids?: string[] | null;
+  resolved_dependencies?: string[] | null;
+  missing_dependencies?: string[] | null;
+  failed_dependencies?: string[] | null;
+  dependency_context_keys?: string[] | null;
+  dependency_error_count?: number | null;
+  failure_category?: string | null;
+  recoverable?: boolean | null;
+  degraded?: boolean | null;
+  fallback_used?: boolean | null;
+  recovery_strategy?: string | null;
+  degradation_reason?: string | null;
+  provider?: string | null;
+  api_status?: string | null;
+  cache_hit?: boolean | null;
+  cache_backend?: string | null;
+  cache_write?: boolean | null;
+  memory_preference_source?: string | null;
+  memory_used_preferences?: string[] | null;
+  memory_preference_count?: number | null;
 }
 
 export interface ExecutionTrace {
@@ -157,7 +177,20 @@ export interface ExecutionTrace {
     template_task_count?: number;
     dynamic_rag_count?: number;
     internal_task_count?: number;
-    [key: string]: number | string | boolean | string[] | undefined;
+    degraded_count?: number;
+    recoverable_failure_count?: number;
+    fallback_used_count?: number;
+    unrecoverable_failure_count?: number;
+    external_api_degraded_count?: number;
+    external_api_failed_count?: number;
+    api_cache_hit_count?: number;
+    api_cache_write_count?: number;
+    recovery_strategy_counts?: Record<string, number>;
+    memory_personalization_applied?: boolean;
+    memory_preference_count?: number;
+    memory_conflict_count?: number;
+    memory_preference_fields?: string[];
+    [key: string]: number | string | boolean | string[] | Record<string, number> | undefined;
   };
 }
 
@@ -174,6 +207,70 @@ export interface ChatResponse {
   response: string;
   artifacts?: ChatArtifacts | null;
   execution_trace?: ExecutionTrace | null;
+}
+
+export interface ApiErrorPayload {
+  code: string;
+  message: string;
+  recoverable: boolean;
+}
+
+export interface ApiErrorResponse {
+  detail: unknown;
+  error: ApiErrorPayload;
+}
+
+export interface HistoryMessage {
+  role: MessageRole | string;
+  content: string;
+  timestamp?: string | null;
+  run_id?: string | null;
+  source?: string | null;
+}
+
+export interface HistoryResponse {
+  session_id: string;
+  history: HistoryMessage[];
+}
+
+export interface TaskSummaryItem {
+  task_id?: string | null;
+  task_type?: string | null;
+  tool?: string | null;
+  name?: string | null;
+  success: boolean;
+  error?: string | null;
+  duration_ms?: number | null;
+  execution_mode?: string | null;
+  degraded?: boolean | null;
+  fallback_used?: boolean | null;
+  result_summary?: string | null;
+}
+
+export interface SessionRunRecord {
+  run_id: string;
+  session_id: string;
+  user_message: string;
+  ai_message: string;
+  intent_type?: string | null;
+  task_count: number;
+  failed_count: number;
+  artifact_keys: string[];
+  trace_summary: Record<string, unknown>;
+  artifacts: ChatArtifacts;
+  execution_trace: ExecutionTrace;
+  task_summary: TaskSummaryItem[];
+  created_at: string;
+}
+
+export interface SessionRunsResponse {
+  session_id: string;
+  runs: SessionRunRecord[];
+  count: number;
+}
+
+export interface ClearHistoryResponse {
+  message: string;
 }
 
 export interface ExternalServiceStatus {

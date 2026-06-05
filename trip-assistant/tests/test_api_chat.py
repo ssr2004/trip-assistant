@@ -13,10 +13,39 @@ class FakeAgent:
 
     def __init__(self):
         self.calls = []
+        self.cleared_sessions = []
 
     async def arun(self, message: str, session_id: str) -> str:
         self.calls.append({"message": message, "session_id": session_id})
         return f"已处理：{message}"
+
+    def get_history(self, session_id: str):
+        return [
+            {"role": "user", "content": "你好", "timestamp": "2026-06-05T12:00:00"},
+            {"role": "assistant", "content": "你好，我是旅行助手", "timestamp": "2026-06-05T12:00:01"},
+        ]
+
+    def get_session_runs(self, session_id: str, limit: int = 20):
+        return [
+            {
+                "run_id": "run-1",
+                "session_id": session_id,
+                "user_message": "你好",
+                "ai_message": "你好，我是旅行助手",
+                "intent_type": "general_chat",
+                "task_count": 0,
+                "failed_count": 0,
+                "artifact_keys": [],
+                "trace_summary": {"intent": "general_chat"},
+                "artifacts": {},
+                "execution_trace": {"steps": [], "summary": {"intent": "general_chat"}},
+                "task_summary": [],
+                "created_at": "2026-06-05T12:00:01",
+            }
+        ][:limit]
+
+    def clear_history(self, session_id: str):
+        self.cleared_sessions.append(session_id)
 
 
 class FakeArtifactAgent(FakeAgent):
@@ -99,6 +128,11 @@ def test_chat_rejects_empty_message(monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "消息不能为空"
+    assert response.json()["error"] == {
+        "code": "http_error",
+        "message": "消息不能为空",
+        "recoverable": True,
+    }
     assert fake_agent.calls == []
 
 
@@ -132,3 +166,50 @@ def test_chat_openapi_uses_structured_artifact_schema(monkeypatch):
     assert "ItineraryArtifact" in schemas
     assert "RouteArtifact" in schemas
     assert "TraceStep" in schemas
+    assert "HistoryResponse" in schemas
+    assert "SessionRunsResponse" in schemas
+    assert "APIErrorResponse" in schemas
+    paths = response.json()["paths"]
+    assert paths["/api/history/{session_id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("/HistoryResponse")
+    assert paths["/api/history/{session_id}/runs"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("/SessionRunsResponse")
+
+
+def test_history_api_uses_typed_message_contract(monkeypatch):
+    """历史消息接口返回稳定结构。"""
+    client, _ = make_client(monkeypatch)
+
+    response = client.get("/api/history/session-contract")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == "session-contract"
+    assert data["history"][0]["role"] == "user"
+    assert data["history"][0]["content"] == "你好"
+    assert data["history"][1]["role"] == "assistant"
+
+
+def test_session_runs_api_uses_typed_runtime_contract(monkeypatch):
+    """运行历史接口返回artifact、trace和task summary边界。"""
+    client, _ = make_client(monkeypatch)
+
+    response = client.get("/api/history/session-contract/runs?limit=1")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == "session-contract"
+    assert data["count"] == 1
+    run = data["runs"][0]
+    assert run["run_id"] == "run-1"
+    assert run["execution_trace"]["summary"]["intent"] == "general_chat"
+    assert run["task_summary"] == []
+
+
+def test_clear_history_api_uses_typed_response(monkeypatch):
+    """清理历史接口返回稳定响应，并调用Agent清理。"""
+    client, fake_agent = make_client(monkeypatch)
+
+    response = client.delete("/api/history/session-contract")
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "历史记录已清除"}
+    assert fake_agent.cleared_sessions == ["session-contract"]

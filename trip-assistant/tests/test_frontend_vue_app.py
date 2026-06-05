@@ -38,9 +38,15 @@ def test_frontend_calls_chat_and_external_status_apis():
     assert 'fetch("/api/chat"' in api_ts
     assert 'fetch("/api/external/status")' in api_ts
     assert 'fetch("/api/llm/status")' in api_ts
+    assert "fetchHistory" in api_ts
+    assert "fetchSessionRuns" in api_ts
+    assert "clearHistory" in api_ts
+    assert "`/api/history/${encodeURIComponent(sessionId)}`" in api_ts
     assert "Promise<ChatResponse>" in api_ts
     assert "Promise<ExternalStatusResponse>" in api_ts
     assert "Promise<LLMStatusResponse>" in api_ts
+    assert "Promise<HistoryResponse>" in api_ts
+    assert "Promise<SessionRunsResponse>" in api_ts
     assert "travelMindSessionId" in app_vue
     assert "newSession" in app_vue
     assert "data.artifacts" in app_vue
@@ -72,11 +78,18 @@ def test_frontend_has_typescript_contract_boundary():
     assert "export interface ChatArtifacts" in types_ts
     assert "export interface ChatResponse" in types_ts
     assert "export interface ExecutionTrace" in types_ts
+    assert "export interface ApiErrorResponse" in types_ts
+    assert "export interface HistoryResponse" in types_ts
+    assert "export interface SessionRunRecord" in types_ts
+    assert "export interface SessionRunsResponse" in types_ts
+    assert "export interface TaskSummaryItem" in types_ts
     assert "export interface LLMStatusResponse" in types_ts
     assert "duration_ms" in types_ts
     assert "execution_mode" in types_ts
     assert "error_type" in types_ts
     assert "execution_trace" in types_ts
+    assert "api_cache_hit_count" in types_ts
+    assert "memory_preference_fields" in types_ts
     assert "export interface ExternalStatusResponse" in types_ts
     assert '<script setup lang="ts">' in app_vue
 
