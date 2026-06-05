@@ -12,7 +12,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.config import get_settings
-from core.state import AgentState
+from core.state import AgentState, TASK_RESULT_REQUIRED_FIELDS
 from core.planner import TaskPlanner
 from core.memory.manager import MemoryManager
 from core.intent import IntentParser
@@ -113,26 +113,8 @@ class TravelAgent:
         for task in sorted(tasks, key=lambda item: item.get("priority", 99)):
             task_type = task.get("task_type", "tool_call")
             started_at = time.perf_counter()
-
-            if task_type == "ask_user":
-                task_result = self._build_internal_result(task, task.get("params", {}))
-                task_result = self._finalize_task_result(task_result, started_at)
-            elif task_type == "recommend_destination":
-                task_result = self._build_internal_result(task, self._recommend_destinations(task))
-                task_result = self._finalize_task_result(task_result, started_at)
-            elif task_type == "dynamic_rag_query":
-                task_result = self._build_internal_result(
-                    task,
-                    self._query_dynamic_rag(task, state.get("session_id", "default")),
-                )
-                task_result = self._finalize_task_result(task_result, started_at)
-            elif task_type == "revise_itinerary":
-                task_result = self._build_internal_result(
-                    task,
-                    await self._revise_itinerary(task, state.get("session_id", "default")),
-                )
-                task_result = self._finalize_task_result(task_result, started_at)
-            else:
+            task_result = await self._execute_internal_task(task, task_type, state, started_at)
+            if task_result is None:
                 task_result = await self._execute_tool_task(task, result_by_task_id, started_at)
 
             results.append(task_result)
@@ -148,6 +130,37 @@ class TravelAgent:
         )
         self._collect_itinerary_context(results, session_id)
         return {"task_results": results, "dynamic_rag_context": dynamic_rag_context}
+
+    async def _execute_internal_task(
+        self,
+        task: Dict[str, Any],
+        task_type: str,
+        state: AgentState,
+        started_at: float,
+    ) -> Optional[Dict[str, Any]]:
+        """Execute non-tool tasks owned by the agent runtime."""
+        session_id = state.get("session_id", "default")
+        if task_type == "ask_user":
+            return self._finalize_task_result(
+                self._build_internal_result(task, task.get("params", {})),
+                started_at,
+            )
+        if task_type == "recommend_destination":
+            return self._finalize_task_result(
+                self._build_internal_result(task, self._recommend_destinations(task)),
+                started_at,
+            )
+        if task_type == "dynamic_rag_query":
+            return self._finalize_task_result(
+                self._build_internal_result(task, self._query_dynamic_rag(task, session_id)),
+                started_at,
+            )
+        if task_type == "revise_itinerary":
+            return self._finalize_task_result(
+                self._build_internal_result(task, await self._revise_itinerary(task, session_id)),
+                started_at,
+            )
+        return None
 
     async def _execute_tool_task(
         self,
@@ -246,6 +259,7 @@ class TravelAgent:
         dependency_metadata: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Attach execution metadata used by trace observability."""
+        self._ensure_task_result_contract(task_result)
         duration_ms = max(round((time.perf_counter() - started_at) * 1000), 0)
         data = self._extract_result_data(task_result)
         meta = {
@@ -273,6 +287,17 @@ class TravelAgent:
             })
         task_result["meta"] = meta
         return task_result
+
+    def _ensure_task_result_contract(self, task_result: Dict[str, Any]) -> None:
+        """Normalize executor output before response, artifact and trace consumers read it."""
+        task_result.setdefault("task", {})
+        task_result["success"] = bool(task_result.get("success"))
+        task_result.setdefault("result", None)
+        task_result.setdefault("error", None)
+        task_result.setdefault("meta", {})
+        missing_fields = TASK_RESULT_REQUIRED_FIELDS.difference(task_result.keys())
+        if missing_fields:
+            raise ValueError(f"task result missing required fields: {sorted(missing_fields)}")
 
     def _resolve_execution_mode(self, task_result: Dict[str, Any], data: Any) -> str:
         """Infer how a task was executed without exposing raw provider credentials."""
@@ -1208,8 +1233,12 @@ class TravelAgent:
     async def arun_with_artifacts(self, message: str, session_id: str) -> Dict[str, Any]:
         """异步运行Agent，并返回可供前端展示的结构化结果"""
         config = {"configurable": {"thread_id": session_id}}
+        result = await self.graph.ainvoke(self._build_initial_state(message, session_id), config)
+        return self._build_agent_output(result)
 
-        initial_state = {
+    def _build_initial_state(self, message: str, session_id: str) -> AgentState:
+        """Build the LangGraph state owned by the agent runtime."""
+        return {
             "messages": [HumanMessage(content=message)],
             "intent": None,
             "tasks": [],
@@ -1220,16 +1249,16 @@ class TravelAgent:
             "session_id": session_id,
         }
 
-        result = await self.graph.ainvoke(initial_state, config)
-
+    def _build_agent_output(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the public agent response consumed by the API and frontend."""
         response = "处理完成"
-        if result.get("messages"):
-            response = result["messages"][-1].content
-
+        if state.get("messages"):
+            response = state["messages"][-1].content
+        task_results = state.get("task_results", [])
         return {
             "response": response,
-            "artifacts": self._build_response_artifacts(result.get("task_results", [])),
-            "execution_trace": self._build_execution_trace(result),
+            "artifacts": self._build_response_artifacts(task_results),
+            "execution_trace": self._build_execution_trace(state),
         }
 
     def _build_execution_trace(self, state: Dict[str, Any]) -> Dict[str, Any]:
