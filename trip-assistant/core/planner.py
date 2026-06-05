@@ -399,12 +399,78 @@ class TaskPlanner:
             ),
         ]
 
+        # Replace the static itinerary task with a dependency-aware version.
+        tasks = [task for task in tasks if task.task_id != "generate_itinerary_1"]
+
+        weather_aware = self._has_weather_constraint(user_query, preferences)
+        if weather_aware:
+            weather_task = PlanningTask(
+                task_id="get_weather_forecast_1",
+                task_type="tool_call",
+                name="查询天气预报",
+                priority=5,
+                tool="get_weather_forecast",
+                params={
+                    "city": destination,
+                    "days": duration,
+                    "departure_date": entities.get("departure_date"),
+                    "preferences": preferences,
+                },
+                reason="用户提到天气、雨天或备选路线约束，完整行程生成前需要先获取目的地天气信息。",
+            )
+            tasks.append(weather_task)
+
+        itinerary_dependencies = [
+            "search_flights_1",
+            "search_hotels_1",
+            "search_attractions_1",
+            "retrieve_guide_1",
+        ]
+        if any(task.task_id == "get_weather_forecast_1" for task in tasks):
+            itinerary_dependencies.append("get_weather_forecast_1")
+        itinerary_priority = max(task.priority for task in tasks) + 1
+        tasks.append(
+            PlanningTask(
+                task_id="generate_itinerary_1",
+                task_type="generate_itinerary",
+                name="鐢熸垚鏃呰琛岀▼",
+                priority=itinerary_priority,
+                tool="generate_itinerary",
+                params={
+                    "origin": origin,
+                    "destination": destination,
+                    "duration": duration,
+                    "budget": budget,
+                    "travelers": entities.get("travelers"),
+                    "preferences": preferences,
+                    "weather_aware": weather_aware,
+                },
+                depends_on=itinerary_dependencies,
+                reason="闇€瑕佺患鍚堣埅鐝€侀厭搴椼€佹櫙鐐广€佹敾鐣ュ拰鍋忓ソ鐢熸垚鏈€缁堣绋嬨€?",
+            )
+        )
         return TaskPlan(
             intent=intent_type,
             tasks=tasks,
             need_user_input=False,
             summary="目的地明确，规划航班、酒店、景点、攻略检索和行程生成任务。",
         )
+
+    def _has_weather_constraint(self, user_query: str, preferences: List[str]) -> bool:
+        """Return whether itinerary planning should explicitly fetch weather context."""
+        text = " ".join([user_query or "", *[str(preference) for preference in preferences or []]])
+        weather_keywords = [
+            "天气",
+            "下雨",
+            "雨天",
+            "阴雨",
+            "备选",
+            "室内",
+            "weather",
+            "rain",
+            "backup",
+        ]
+        return any(keyword in text for keyword in weather_keywords)
 
     def _build_dynamic_rag_plan(self, intent_type: str, user_query: str) -> TaskPlan:
         """构建动态外部知识检索任务"""

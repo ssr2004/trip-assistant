@@ -39,10 +39,11 @@ def test_template_planner_passes_default_quality_benchmarks():
         assert result.normalized_score >= benchmark.min_normalized_score
         assert not result.missing_constraints
         assert not [issue for issue in result.issues if issue.severity == "critical"]
+        assert not [issue for issue in result.issues if issue.code == "missing_tool"]
 
     suite = evaluate_benchmark_suite(results)
     assert suite["passed"] is True
-    assert suite["average_normalized_score"] >= 0.9
+    assert suite["average_normalized_score"] == 1.0
 
 
 def test_planner_evaluation_flags_unsafe_or_incomplete_plan():
@@ -100,5 +101,6 @@ def test_planner_quality_script_runs_without_llm_or_key_leakage():
     assert payload["suite"]["passed"] is True
     assert payload["suite"]["attempt_llm"] is False
     assert payload["suite"]["case_count"] >= 3
+    assert payload["suite"]["average_normalized_score"] == 1.0
     assert "LLM_API_KEY" not in result.stdout
     assert "test-key-that-must-not-leak" not in result.stdout

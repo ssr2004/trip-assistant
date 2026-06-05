@@ -83,6 +83,38 @@ def test_plan_full_travel_tasks():
     assert "generate_itinerary" in tools
 
 
+def test_plan_full_travel_with_weather_constraint_adds_weather_task():
+    """Weather-sensitive travel planning should fetch weather before itinerary generation."""
+    planner = TaskPlanner()
+    intent = {
+        "intent": "travel_plan",
+        "entities": {
+            "origin": "郑州",
+            "destination": "杭州",
+            "departure_date": "2026-07-10",
+            "return_date": None,
+            "duration": 3,
+            "budget": 3000,
+            "travelers": 2,
+            "preferences": ["美食", "地铁附近", "雨天备选"],
+        },
+        "missing_slots": [],
+    }
+
+    tasks = planner.plan(intent, {"query": "郑州去杭州三天，预算3000，需要雨天备选路线"})
+    tools = [task.get("tool") for task in tasks]
+    weather_task = next(task for task in tasks if task.get("tool") == "get_weather_forecast")
+    itinerary_task = next(task for task in tasks if task["task_type"] == "generate_itinerary")
+
+    assert len(tasks) == 6
+    assert "get_weather_forecast" in tools
+    assert weather_task["params"]["city"] == "杭州"
+    assert weather_task["params"]["days"] == 3
+    assert tools.index("get_weather_forecast") < tools.index("generate_itinerary")
+    assert "get_weather_forecast_1" in itinerary_task["depends_on"]
+    assert itinerary_task["params"]["weather_aware"] is True
+
+
 def test_plan_policy_query():
     """政策查询生成政策检索任务"""
     planner = TaskPlanner()
