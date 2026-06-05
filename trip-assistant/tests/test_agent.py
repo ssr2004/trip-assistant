@@ -29,10 +29,9 @@ async def test_complete_travel_plan_response(agent):
     response = await agent.arun("我要从郑州去杭州玩三天，预算3000，6月10日出发", "test-session-4")
     assert response is not None
     assert "已为您规划郑州到杭州的3天旅行方案" in response
-    assert "航班推荐" in response
-    assert "酒店推荐" in response
     assert "景点推荐" in response
     assert "每日行程" in response
+    assert "不生成航班号、票价、舱位、余票、酒店房态、房型或可订价格" in response
     assert "{'" not in response
 
 
@@ -62,21 +61,24 @@ async def test_agent_returns_weather_artifact(agent):
 
 @pytest.mark.asyncio
 async def test_flight_search(agent):
-    """测试航班搜索"""
+    """测试无真实航班库存时不返回模拟航班"""
     response = await agent.arun("搜索从北京到上海的航班", "test-session-2")
     assert response is not None
-    assert "航班推荐" in response
-    assert "东方航空" in response
+    assert "暂未成功" in response
+    assert "不使用mock补全" in response
+    assert "东方航空" not in response
+    assert "MU1234" not in response
     assert "None" not in response
 
 
 @pytest.mark.asyncio
 async def test_hotel_search(agent):
-    """测试酒店搜索"""
+    """测试无真实酒店POI时不返回模拟酒店"""
     response = await agent.arun("搜索杭州的酒店", "test-session-3")
     assert response is not None
-    assert "酒店推荐" in response
-    assert "杭州西湖国宾馆" in response
+    assert "酒店推荐查询暂未成功" in response
+    assert "mock fallback未启用" in response
+    assert "杭州西湖国宾馆" not in response
 
 
 @pytest.mark.asyncio

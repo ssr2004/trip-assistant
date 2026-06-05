@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref } from "vue";
-import { MessageCircle, Send } from "@lucide/vue";
+import { ListTree, MessageCircle, Send } from "@lucide/vue";
 import ArtifactCards from "./ArtifactCards.vue";
 import ExecutionTraceTimeline from "./ExecutionTraceTimeline.vue";
 import type { ChatMessage } from "../types";
@@ -23,6 +23,7 @@ const emit = defineEmits<{
 }>();
 const input = ref("");
 const messagesPanel = ref<HTMLDivElement | null>(null);
+const expandedTraces = ref<Record<string, boolean>>({});
 
 function submitMessage() {
   const message = input.value.trim();
@@ -39,6 +40,17 @@ function hasArtifacts(message: ChatMessage) {
 
 function hasTrace(message: ChatMessage) {
   return message.role === "assistant" && Boolean(message.execution_trace?.steps?.length);
+}
+
+function isTraceExpanded(messageId: string): boolean {
+  return Boolean(expandedTraces.value[messageId]);
+}
+
+function toggleTrace(messageId: string) {
+  expandedTraces.value = {
+    ...expandedTraces.value,
+    [messageId]: !expandedTraces.value[messageId],
+  };
 }
 
 function scrollToBottom() {
@@ -71,7 +83,20 @@ defineExpose({ scrollToBottom });
           <div class="message-bubble">
             {{ message.content }}
           </div>
-          <ExecutionTraceTimeline v-if="hasTrace(message)" :trace="message.execution_trace" />
+          <button
+            v-if="hasTrace(message)"
+            class="trace-toggle"
+            type="button"
+            :aria-expanded="isTraceExpanded(message.id)"
+            @click="toggleTrace(message.id)"
+          >
+            <ListTree :size="15" />
+            {{ isTraceExpanded(message.id) ? "隐藏调试信息" : "显示调试信息" }}
+          </button>
+          <ExecutionTraceTimeline
+            v-if="hasTrace(message) && isTraceExpanded(message.id)"
+            :trace="message.execution_trace"
+          />
           <ArtifactCards v-if="hasArtifacts(message)" :artifacts="message.artifacts" />
         </div>
       </article>

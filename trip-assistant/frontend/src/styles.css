@@ -219,6 +219,26 @@ button:disabled {
   color: #607287;
 }
 
+.trace-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  color: #37516b;
+  background: #eef4fa;
+  border: 1px solid #d3dfeb;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.trace-toggle:hover {
+  background: #e5eef7;
+  border-color: #c4d4e4;
+}
+
 .trace-panel {
   margin-top: 10px;
   padding: 12px;

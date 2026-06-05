@@ -95,14 +95,15 @@ async def test_tool_registry_normalizes_tool_result_model():
 
 @pytest.mark.asyncio
 async def test_existing_tool_result_shape_is_unchanged():
-    """现有工具对外返回结构保持不变"""
+    """现有工具对外返回结构保持不变，且无真实数据源时不mock航班"""
     registry = ToolRegistry()
 
     result = await registry.execute("search_flights", {"origin": "郑州", "destination": "杭州"})
 
     assert set(result.keys()) == {"success", "data", "error", "metadata"}
-    assert result["success"] is True
-    assert result["error"] is None
+    assert result["success"] is False
+    assert result["error"]
     assert result["metadata"]["tool"] == "search_flights"
-    assert result["metadata"]["source"] == "mock_flight_data"
-    assert len(result["data"]["flights"]) == 3
+    assert result["metadata"]["source"] == "amap_airport_poi"
+    assert result["metadata"]["mock"] is False
+    assert result["data"]["flights"] == []

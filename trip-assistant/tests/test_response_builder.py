@@ -76,18 +76,45 @@ def test_build_full_travel_plan_response():
             {
                 "task": {"task_type": "tool_call", "tool": "search_flights", "name": "搜索航班"},
                 "success": True,
-                "result": [
-                    {
-                        "flight_no": "MU1234",
-                        "airline": "东方航空",
-                        "departure_airport": "郑州新郑国际机场",
-                        "arrival_airport": "杭州萧山国际机场",
-                        "departure_time": "2026-06-10 08:00",
-                        "arrival_time": "2026-06-10 10:30",
-                        "price": 680,
-                        "cabin_class": "经济舱",
-                    }
-                ],
+                "result": {
+                    "success": True,
+                    "data": {
+                        "flights": [],
+                        "airport_guidance": {
+                            "origin_airports": [
+                                {
+                                    "name": "郑州新郑国际机场",
+                                    "address": "郑州市新郑市迎宾大道",
+                                    "source": "amap",
+                                }
+                            ],
+                            "destination_airports": [
+                                {
+                                    "name": "杭州萧山国际机场",
+                                    "address": "杭州市萧山区空港大道",
+                                    "source": "amap",
+                                }
+                            ],
+                            "airport_pairs": [
+                                {
+                                    "origin_airport": {
+                                        "name": "郑州新郑国际机场",
+                                        "address": "郑州市新郑市迎宾大道",
+                                        "source": "amap",
+                                    },
+                                    "destination_airport": {
+                                        "name": "杭州萧山国际机场",
+                                        "address": "杭州市萧山区空港大道",
+                                        "source": "amap",
+                                    },
+                                }
+                            ],
+                            "route_note": "以下为真实机场POI组成的出行衔接建议，不包含真实航班班次、票价、舱位或余票。",
+                        },
+                    },
+                    "error": None,
+                    "metadata": {"tool": "search_flights", "source": "amap_airport_poi"},
+                },
                 "error": None,
             },
             {
@@ -97,9 +124,9 @@ def test_build_full_travel_plan_response():
                     {
                         "name": "杭州西湖国宾馆",
                         "address": "杭州市西湖区杨公堤18号",
-                        "price_per_night": 1200,
                         "rating": 4.8,
-                        "amenities": ["免费WiFi", "游泳池"],
+                        "telephone": "0571-87979889",
+                        "source": "amap",
                     }
                 ],
                 "error": None,
@@ -158,13 +185,17 @@ def test_build_full_travel_plan_response():
 
     assert "已为您规划郑州到杭州的3天旅行方案" in response
     assert "一、出行概览" in response
-    assert "二、航班推荐" in response
+    assert "二、机场与出行衔接建议" in response
     assert "三、酒店推荐" in response
     assert "四、景点推荐" in response
     assert "五、每日行程" in response
     assert "六、预算估算" in response
-    assert "东方航空" in response
+    assert "郑州新郑国际机场" in response
+    assert "杭州萧山国际机场" in response
     assert "杭州西湖国宾馆" in response
+    assert "航班号" in response
+    assert "票价" in response
+    assert "元/晚" not in response
     assert "Day 1" in response
     assert "{'" not in response
     assert "[" not in response
@@ -355,8 +386,8 @@ def test_build_single_attraction_response_shows_external_sources():
 
 
 
-def test_build_single_flight_response_cleans_none_time():
-    """单独航班查询不暴露None时间"""
+def test_build_single_flight_response_uses_airport_guidance():
+    """单独航班查询只展示真实机场POI衔接建议"""
     builder = ResponseBuilder()
     response = builder.build(
         intent={"intent": "flight_search"},
@@ -367,18 +398,16 @@ def test_build_single_flight_response_cleans_none_time():
                 "result": {
                     "success": True,
                     "data": {
-                        "flights": [
-                            {
-                                "flight_no": "MU1234",
-                                "airline": "东方航空",
-                                "departure_airport": "北京",
-                                "arrival_airport": "上海",
-                                "departure_time": "None 08:00",
-                                "arrival_time": "None 10:30",
-                                "price": 680,
-                                "cabin_class": "经济舱",
-                            }
-                        ]
+                        "flights": [],
+                        "airport_guidance": {
+                            "airport_pairs": [
+                                {
+                                    "origin_airport": {"name": "北京首都国际机场", "address": "北京市顺义区"},
+                                    "destination_airport": {"name": "上海虹桥国际机场", "address": "上海市长宁区"},
+                                }
+                            ],
+                            "route_note": "真实机场POI建议，不包含航班库存。",
+                        },
                     },
                     "error": None,
                     "metadata": {"tool": "search_flights"},
@@ -388,6 +417,9 @@ def test_build_single_flight_response_cleans_none_time():
         ],
     )
 
-    assert "航班推荐" in response
-    assert "东方航空" in response
+    assert "真实机场POI" in response
+    assert "北京首都国际机场" in response
+    assert "上海虹桥国际机场" in response
+    assert "MU1234" not in response
+    assert "东方航空" not in response
     assert "None" not in response

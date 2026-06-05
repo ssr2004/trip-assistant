@@ -83,13 +83,13 @@ async def test_agent_injects_dependency_context_into_itinerary(agent):
 
     itinerary_result = result["task_results"][-1]["result"]
     context_summary = itinerary_result["data"]["context_summary"]
-    assert context_summary["flight_count"] == 3
-    assert context_summary["hotel_count"] == 3
+    assert context_summary["flight_count"] == 0
+    assert context_summary["hotel_count"] == 0
     assert context_summary["attraction_count"] == 4
     assert context_summary["has_guide"] is True
     assert context_summary["has_weather"] is True
     assert context_summary["weather_forecast_count"] >= 1
-    assert context_summary["dependency_error_count"] == 0
+    assert context_summary["dependency_error_count"] == 2
 
     itinerary_meta = result["task_results"][-1]["meta"]
     assert itinerary_meta["dependency_ids"] == [
@@ -99,10 +99,16 @@ async def test_agent_injects_dependency_context_into_itinerary(agent):
         "retrieve_guide_1",
         "get_weather_forecast_1",
     ]
-    assert itinerary_meta["resolved_dependencies"] == itinerary_meta["dependency_ids"]
+    assert itinerary_meta["resolved_dependencies"] == [
+        "search_attractions_1",
+        "retrieve_guide_1",
+        "get_weather_forecast_1",
+    ]
     assert itinerary_meta["missing_dependencies"] == []
-    assert itinerary_meta["failed_dependencies"] == []
-    assert set(itinerary_meta["dependency_context_keys"]) >= {"flights", "hotels", "attractions", "guide", "weather"}
+    assert itinerary_meta["failed_dependencies"] == ["search_flights_1", "search_hotels_1"]
+    assert set(itinerary_meta["dependency_context_keys"]) >= {"attractions", "guide", "weather", "errors"}
+    assert "flights" not in itinerary_meta["dependency_context_keys"]
+    assert "hotels" not in itinerary_meta["dependency_context_keys"]
 
 
 @pytest.mark.asyncio

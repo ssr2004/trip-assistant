@@ -42,19 +42,23 @@ class AMapPOIClient:
         self,
         city: str,
         keywords: str = "景点",
+        poi_types: Optional[str] = None,
+        extensions: str = "base",
         offset: int = 10,
         page: int = 1,
     ) -> Dict[str, Any]:
         """检索城市景点POI，未配置Key时返回mock fallback"""
+        resolved_types = self.SCENIC_TYPES if poi_types is None else poi_types
         params = {
             "key": self.client.api_key,
             "keywords": keywords or "景点",
             "city": city,
-            "types": self.SCENIC_TYPES,
             "offset": offset,
             "page": page,
-            "extensions": "base",
+            "extensions": extensions or "base",
         }
+        if resolved_types:
+            params["types"] = resolved_types
         cache_params = self._cache_params(params)
         cached_result, cache_metadata = await self.cache.get("amap", "poi", cache_params)
         if cached_result:

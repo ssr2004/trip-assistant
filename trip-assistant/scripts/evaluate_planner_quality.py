@@ -16,6 +16,8 @@ from typing import Any, Dict, List
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from core.planner import TaskPlanner  # noqa: E402
 from core.planner_evaluation import (  # noqa: E402

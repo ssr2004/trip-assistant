@@ -16,6 +16,8 @@ from typing import Any, Dict
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from core.agent import TravelAgent  # noqa: E402
 from core.intent import IntentParser  # noqa: E402

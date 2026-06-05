@@ -3,6 +3,8 @@
 """
 import pytest
 
+from core.amap_client import AMapPOIClient
+from core.cache import ExternalAPICache
 from tools.registry import ToolRegistry
 from tools.flights import FlightTool
 from tools.hotels import HotelTool
@@ -12,18 +14,93 @@ from tools.guide import GuideTool
 from tools.itinerary import ItineraryTool
 
 
+class FakeAMapResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+def fake_amap_request(pois_by_city):
+    def request(method, url, params=None, **kwargs):
+        city = (params or {}).get("city")
+        return FakeAMapResponse({
+            "status": "1",
+            "info": "OK",
+            "count": str(len(pois_by_city.get(city, []))),
+            "pois": pois_by_city.get(city, []),
+        })
+    return request
+
+
+def amap_test_client(pois_by_city):
+    return AMapPOIClient(
+        api_key="test-amap-key",
+        request_func=fake_amap_request(pois_by_city),
+        mock_enabled=False,
+        cache=ExternalAPICache(enabled=False),
+    )
+
+
 @pytest.mark.asyncio
 async def test_flight_tool_returns_standard_result():
-    """航班工具返回标准化结构"""
-    tool = FlightTool()
+    """航班工具返回真实机场POI衔接建议，不返回模拟航班库存"""
+    tool = FlightTool(amap_client=amap_test_client({
+        "郑州": [
+            {
+                "id": "zz-airport",
+                "name": "郑州新郑国际机场",
+                "type": "交通设施服务;机场相关;机场",
+                "address": "郑州市新郑市迎宾大道",
+                "cityname": "郑州市",
+                "adname": "新郑市",
+                "tel": "0371-96666",
+            }
+        ],
+        "杭州": [
+            {
+                "id": "hz-airport",
+                "name": "杭州萧山国际机场",
+                "type": "交通设施服务;机场相关;机场",
+                "address": "杭州市萧山区空港大道",
+                "cityname": "杭州市",
+                "adname": "萧山区",
+            }
+        ],
+    }))
 
     result = await tool.execute(origin="郑州", destination="杭州", date="2026-06-10")
 
     assert result["success"] is True
     assert result["error"] is None
     assert result["metadata"]["tool"] == "search_flights"
-    assert result["metadata"]["source"] == "mock_flight_data"
-    assert len(result["data"]["flights"]) == 3
+    assert result["metadata"]["source"] == "amap_airport_poi"
+    assert result["metadata"]["mock"] is False
+    assert result["metadata"]["real_flight_inventory"] is False
+    assert result["data"]["flights"] == []
+    assert result["data"]["airport_guidance"]["airport_pairs"][0]["origin_airport"]["name"] == "郑州新郑国际机场"
+    pair = result["data"]["airport_guidance"]["airport_pairs"][0]
+    assert "flight_no" not in pair
+    assert "price" not in pair
+    assert "cabin_class" not in pair
+
+
+@pytest.mark.asyncio
+async def test_flight_tool_without_real_provider_does_not_mock():
+    """没有真实机场POI数据源时不返回模拟航班推荐"""
+    tool = FlightTool()
+
+    result = await tool.execute(origin="郑州", destination="杭州", date="2026-06-10")
+
+    assert result["success"] is False
+    assert result["metadata"]["tool"] == "search_flights"
+    assert result["metadata"]["mock"] is False
+    assert result["data"]["flights"] == []
+    assert result["data"]["airport_guidance"]["airport_pairs"] == []
 
 
 @pytest.mark.asyncio
@@ -40,15 +117,50 @@ async def test_flight_tool_handles_missing_route():
 
 @pytest.mark.asyncio
 async def test_hotel_tool_returns_standard_result():
-    """酒店工具返回标准化结构"""
-    tool = HotelTool()
+    """酒店工具返回真实高德酒店POI，不返回模拟价格库存房型"""
+    tool = HotelTool(amap_client=amap_test_client({
+        "杭州": [
+            {
+                "id": "hotel-1",
+                "name": "杭州西湖国宾馆",
+                "type": "住宿服务;宾馆酒店;五星级宾馆",
+                "address": "杭州市西湖区杨公堤18号",
+                "cityname": "杭州市",
+                "adname": "西湖区",
+                "tel": "0571-87979889",
+                "biz_ext": {"rating": "4.8"},
+            }
+        ]
+    }))
 
     result = await tool.execute(location="杭州")
 
     assert result["success"] is True
     assert result["metadata"]["tool"] == "search_hotels"
-    assert result["metadata"]["source"] == "mock_hotel_data"
-    assert len(result["data"]["hotels"]) == 3
+    assert result["metadata"]["source"] == "amap_hotel_poi"
+    assert result["metadata"]["mock"] is False
+    assert result["metadata"]["real_inventory"] is False
+    assert len(result["data"]["hotels"]) == 1
+    hotel = result["data"]["hotels"][0]
+    assert hotel["name"] == "杭州西湖国宾馆"
+    assert hotel["source"] == "amap"
+    assert "location" not in hotel
+    assert "price_per_night" not in hotel
+    assert "room_type" not in hotel
+    assert "availability" not in hotel
+
+
+@pytest.mark.asyncio
+async def test_hotel_tool_without_real_provider_does_not_mock():
+    """没有真实酒店POI数据源时不返回模拟酒店"""
+    tool = HotelTool()
+
+    result = await tool.execute(location="杭州")
+
+    assert result["success"] is False
+    assert result["metadata"]["tool"] == "search_hotels"
+    assert result["metadata"]["mock"] is False
+    assert result["data"]["hotels"] == []
 
 
 @pytest.mark.asyncio
@@ -183,8 +295,10 @@ async def test_registry_executes_new_tools():
     itinerary_result = await registry.execute("generate_itinerary", {"destination": "杭州", "duration": 3})
     weather_result = await registry.execute("get_weather_forecast", {"city": "杭州", "days": 3})
 
-    assert flight_result["success"] is True
-    assert hotel_result["success"] is True
+    assert flight_result["success"] is False
+    assert flight_result["metadata"]["mock"] is False
+    assert hotel_result["success"] is False
+    assert hotel_result["metadata"]["mock"] is False
     assert attraction_result["success"] is True
     assert policy_result["success"] is True
     assert guide_result["success"] is True

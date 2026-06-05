@@ -117,9 +117,10 @@ class ResponseBuilder:
         ))
 
         flights_result = self._find_result_by_tool(task_results, "search_flights")
-        flights = self._tool_items(flights_result, "flights") if flights_result else []
-        if flights:
-            lines.extend(self._format_flights(flights, section_title="二、航班推荐"))
+        flight_data = self._result_data(flights_result) if flights_result else {}
+        airport_guidance = flight_data.get("airport_guidance") if isinstance(flight_data, dict) else None
+        if airport_guidance:
+            lines.extend(self._format_airport_guidance(airport_guidance, section_title="二、机场与出行衔接建议"))
 
         hotels_result = self._find_result_by_tool(task_results, "search_hotels")
         hotels = self._tool_items(hotels_result, "hotels") if hotels_result else []
@@ -149,7 +150,7 @@ class ResponseBuilder:
         if error_lines:
             lines.extend(["", "八、执行提示", *error_lines])
 
-        lines.append("\n以上方案基于当前本地模拟数据和攻略文档生成，后续接入真实API和LLM后，可进一步给出实时价格、天气、路线和更个性化的安排。")
+        lines.append("\n数据说明：酒店和机场只展示真实POI或明确失败提示；当前不生成航班号、票价、舱位、余票、酒店房态、房型或可订价格。")
         return "\n".join(lines)
 
     def _format_policy_response(self, task_results: List[Dict]) -> str:
@@ -278,8 +279,11 @@ class ResponseBuilder:
             return f"{title}查询暂未成功：{error}。"
 
         if tool_name == "search_flights":
-            flights = self._tool_items(result, "flights")
-            return "\n".join([f"为您找到以下{title}：", *self._format_flights(flights, section_title=None)])
+            data = self._result_data(result)
+            guidance = data.get("airport_guidance") if isinstance(data, dict) else None
+            if guidance:
+                return "\n".join(["为您找到以下真实机场POI与出行衔接建议：", *self._format_airport_guidance(guidance, section_title=None)])
+            return "暂未查询到真实机场POI结果；在没有真实航班数据源时，不生成航班号、票价、舱位或余票推荐。"
         if tool_name == "search_hotels":
             hotels = self._tool_items(result, "hotels")
             return "\n".join([f"为您找到以下{title}：", *self._format_hotels(hotels, section_title=None)])
@@ -393,29 +397,54 @@ class ResponseBuilder:
         return lines
 
     def _format_flights(self, flights: List[Dict], section_title: Optional[str]) -> List[str]:
-        """格式化航班列表"""
+        """保留旧调用兼容，但不再格式化无真实库存来源的航班字段。"""
         lines = ["", section_title] if section_title else []
-        for index, flight in enumerate((flights or [])[:3], start=1):
-            departure_time = self._clean_time(flight.get("departure_time"))
-            arrival_time = self._clean_time(flight.get("arrival_time"))
-            price = flight.get("price")
-            price_text = f"，约{price:g}元" if isinstance(price, (int, float)) else ""
-            lines.append(
-                f"{index}. {flight.get('airline', '航空公司')} {flight.get('flight_no', '')}："
-                f"{flight.get('departure_airport', '出发机场')} → {flight.get('arrival_airport', '到达机场')}，"
-                f"{departure_time} - {arrival_time}，{flight.get('cabin_class', '舱位待定')}{price_text}。"
-            )
+        lines.append("当前未接入真实航班库存API，不展示航班号、票价、舱位或余票。")
+        return lines
+
+    def _format_airport_guidance(self, guidance: Dict, section_title: Optional[str]) -> List[str]:
+        """格式化真实机场POI与出行衔接建议，不展示航班库存字段。"""
+        lines = ["", section_title] if section_title else []
+        route_note = guidance.get("route_note")
+        if route_note:
+            lines.append(f"- 数据边界：{route_note}")
+
+        pairs = guidance.get("airport_pairs") or []
+        if pairs:
+            for index, pair in enumerate(pairs[:3], start=1):
+                origin_airport = pair.get("origin_airport") or {}
+                destination_airport = pair.get("destination_airport") or {}
+                lines.append(
+                    f"{index}. {origin_airport.get('name', '出发机场')} -> "
+                    f"{destination_airport.get('name', '到达机场')}："
+                    f"出发机场地址 {origin_airport.get('address', '待高德补充')}；"
+                    f"到达机场地址 {destination_airport.get('address', '待高德补充')}。"
+                )
+            lines.append("- 说明：这里展示的是真实机场POI组成的出行衔接候选，不包含航班号、票价、舱位或余票。")
+            return lines
+
+        origin_airports = guidance.get("origin_airports") or []
+        destination_airports = guidance.get("destination_airports") or []
+        if origin_airports:
+            names = "、".join(str(item.get("name")) for item in origin_airports[:3] if item.get("name"))
+            lines.append(f"- 出发地机场POI：{names}")
+        if destination_airports:
+            names = "、".join(str(item.get("name")) for item in destination_airports[:3] if item.get("name"))
+            lines.append(f"- 目的地机场POI：{names}")
+        if not origin_airports and not destination_airports:
+            lines.append("- 暂未查询到真实机场POI，不使用mock补全。")
         return lines
 
     def _format_hotels(self, hotels: List[Dict], section_title: Optional[str]) -> List[str]:
         """格式化酒店列表"""
         lines = ["", section_title] if section_title else []
         for index, hotel in enumerate((hotels or [])[:3], start=1):
-            amenities = hotel.get("amenities") or []
-            amenities_text = f"，设施：{'、'.join(amenities[:3])}" if amenities else ""
+            rating = hotel.get("rating", "暂无评分")
+            telephone = hotel.get("telephone")
+            telephone_text = f"，电话：{telephone}" if telephone else ""
             lines.append(
-                f"{index}. {hotel.get('name', '酒店')}：{hotel.get('address', hotel.get('location', '地址待定'))}，"
-                f"约{hotel.get('price_per_night', '价格待定')}元/晚，评分{hotel.get('rating', '暂无')}{amenities_text}。"
+                f"{index}. {hotel.get('name', '酒店')}：{hotel.get('address', '地址待高德补充')}，"
+                f"评分{rating}{telephone_text}。来源：{hotel.get('source', 'amap')} POI。"
             )
         return lines
 
