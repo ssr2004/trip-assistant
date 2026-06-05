@@ -18,6 +18,12 @@ class TraceStep(BaseModel):
     error_type: str | None = None
     result_summary: str | None = None
     source_count: int | None = None
+    dependency_ids: list[str] | None = None
+    resolved_dependencies: list[str] | None = None
+    missing_dependencies: list[str] | None = None
+    failed_dependencies: list[str] | None = None
+    dependency_context_keys: list[str] | None = None
+    dependency_error_count: int | None = None
 
 
 class ExecutionTrace(BaseModel):

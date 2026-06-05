@@ -211,6 +211,8 @@ class ItineraryTool(BaseTool):
         hotels = context.get("hotels") if isinstance(context, dict) else []
         attractions = context.get("attractions") if isinstance(context, dict) else []
         guide = context.get("guide") if isinstance(context, dict) else None
+        weather = context.get("weather") if isinstance(context, dict) else None
+        forecasts = weather.get("forecasts", []) if isinstance(weather, dict) else []
         errors = context.get("errors") if isinstance(context, dict) else {}
 
         return {
@@ -218,6 +220,8 @@ class ItineraryTool(BaseTool):
             "hotel_count": len(hotels) if isinstance(hotels, list) else 0,
             "attraction_count": len(attractions) if isinstance(attractions, list) else 0,
             "has_guide": bool(guide),
+            "has_weather": bool(weather),
+            "weather_forecast_count": len(forecasts) if isinstance(forecasts, list) else 0,
             "dependency_error_count": len(errors) if isinstance(errors, dict) else 0,
         }
 
@@ -229,6 +233,7 @@ class ItineraryTool(BaseTool):
         flights = context.get("flights") if isinstance(context.get("flights"), list) else []
         hotels = context.get("hotels") if isinstance(context.get("hotels"), list) else []
         attractions = context.get("attractions") if isinstance(context.get("attractions"), list) else []
+        weather = context.get("weather") if isinstance(context.get("weather"), dict) else None
         errors = context.get("errors") if isinstance(context.get("errors"), dict) else {}
 
         compact_context = {
@@ -236,6 +241,7 @@ class ItineraryTool(BaseTool):
             "hotels": hotels[:3],
             "attractions": attractions[:5],
             "guide": context.get("guide"),
+            "weather": weather,
             "errors": errors,
         }
         if not any(compact_context.values()):

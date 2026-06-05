@@ -157,15 +157,25 @@ class TravelAgent:
     ) -> Dict[str, Any]:
         """Execute a tool task and attach trace metadata."""
         tool_name = task.get("tool")
+        dependency_metadata = self._resolve_dependency_metadata(
+            task.get("depends_on", []) or [],
+            result_by_task_id,
+        )
         params = self._inject_dependency_context(
             task=task,
             params=task.get("params", {}),
             result_by_task_id=result_by_task_id,
+            dependency_context=dependency_metadata.get("context"),
         )
 
         if not tool_name:
             task_result = self._build_error_result(task, "任务缺少工具名称")
-            return self._finalize_task_result(task_result, started_at, error_type="missing_tool")
+            return self._finalize_task_result(
+                task_result,
+                started_at,
+                error_type="missing_tool",
+                dependency_metadata=dependency_metadata,
+            )
 
         try:
             result = await self.tool_registry.execute(tool_name, params)
@@ -182,6 +192,7 @@ class TravelAgent:
                 task_result,
                 started_at,
                 error_type="tool_error" if not tool_success else None,
+                dependency_metadata=dependency_metadata,
             )
         except Exception as exc:
             task_result = self._build_error_result(task, str(exc))
@@ -189,6 +200,7 @@ class TravelAgent:
                 task_result,
                 started_at,
                 error_type=exc.__class__.__name__,
+                dependency_metadata=dependency_metadata,
             )
 
     async def _generate_response(self, state: AgentState) -> Dict:
@@ -231,16 +243,27 @@ class TravelAgent:
         task_result: Dict[str, Any],
         started_at: float,
         error_type: str | None = None,
+        dependency_metadata: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Attach execution metadata used by trace observability."""
         duration_ms = max(round((time.perf_counter() - started_at) * 1000), 0)
         data = self._extract_result_data(task_result)
-        task_result["meta"] = {
+        meta = {
             "duration_ms": duration_ms,
             "execution_mode": self._resolve_execution_mode(task_result, data),
             "error_type": error_type or self._resolve_error_type(task_result),
             "result_summary": self._summarize_trace_result(task_result, data),
         }
+        if dependency_metadata and dependency_metadata.get("dependency_ids"):
+            meta.update({
+                "dependency_ids": dependency_metadata.get("dependency_ids", []),
+                "resolved_dependencies": dependency_metadata.get("resolved_dependencies", []),
+                "missing_dependencies": dependency_metadata.get("missing_dependencies", []),
+                "failed_dependencies": dependency_metadata.get("failed_dependencies", []),
+                "dependency_error_count": dependency_metadata.get("dependency_error_count", 0),
+                "dependency_context_keys": dependency_metadata.get("dependency_context_keys", []),
+            })
+        task_result["meta"] = meta
         return task_result
 
     def _resolve_execution_mode(self, task_result: Dict[str, Any], data: Any) -> str:
@@ -834,6 +857,7 @@ class TravelAgent:
         task: Dict,
         params: Dict,
         result_by_task_id: Dict[str, Dict],
+        dependency_context: Dict | None = None,
     ) -> Dict:
         """将depends_on声明的前置任务结果注入到当前工具参数"""
         depends_on = task.get("depends_on", []) or []
@@ -841,47 +865,85 @@ class TravelAgent:
             return params or {}
 
         merged_params = dict(params or {})
-        dependency_context = self._build_dependency_context(depends_on, result_by_task_id)
+        dependency_context = dependency_context or self._build_dependency_context(depends_on, result_by_task_id)
         existing_context = merged_params.get("context")
         if isinstance(existing_context, dict):
             dependency_context = {**dependency_context, **existing_context}
         merged_params["context"] = dependency_context
         return merged_params
 
+    def _resolve_dependency_metadata(
+        self,
+        depends_on: List[str],
+        result_by_task_id: Dict[str, Dict],
+    ) -> Dict[str, Any]:
+        """Resolve task dependencies once for parameter injection and trace metadata."""
+        dependency_ids = list(depends_on or [])
+        context = self._build_dependency_context(dependency_ids, result_by_task_id)
+        return {
+            "dependency_ids": dependency_ids,
+            "resolved_dependencies": context.get("resolved_dependencies", []),
+            "missing_dependencies": context.get("missing_dependencies", []),
+            "failed_dependencies": context.get("failed_dependencies", []),
+            "dependency_error_count": len(context.get("errors", {}) or {}),
+            "dependency_context_keys": self._dependency_context_keys(context),
+            "context": context,
+        }
+
     def _build_dependency_context(
         self,
         depends_on: List[str],
         result_by_task_id: Dict[str, Dict],
     ) -> Dict:
-        """构建供后续任务使用的依赖上下文"""
+        return self._build_dependency_context_v2(depends_on, result_by_task_id)
+
+    def _build_dependency_context_v2(
+        self,
+        depends_on: List[str],
+        result_by_task_id: Dict[str, Dict],
+    ) -> Dict:
+        """Build normalized dependency context for downstream tool tasks."""
         context = {
             "flights": [],
             "hotels": [],
             "attractions": [],
             "guide": None,
+            "weather": None,
+            "routes": [],
             "raw_results": {},
             "errors": {},
+            "resolved_dependencies": [],
+            "missing_dependencies": [],
+            "failed_dependencies": [],
         }
 
         for dependency in depends_on:
             task_result = result_by_task_id.get(dependency)
             if not task_result:
-                context["errors"][dependency] = "依赖任务尚未执行或不存在"
+                context["errors"][dependency] = "dependency task is missing or has not executed"
+                context["missing_dependencies"].append(dependency)
                 continue
 
-            task = task_result.get("task", {})
+            task = task_result.get("task", {}) or {}
             tool_name = task.get("tool")
+            success = bool(task_result.get("success", False))
+            data = self._extract_result_data(task_result)
             context["raw_results"][dependency] = {
-                "task": task,
-                "success": task_result.get("success", False),
-                "result": task_result.get("result"),
+                "task_id": dependency,
+                "task_type": task.get("task_type"),
+                "tool": tool_name,
+                "name": task.get("name"),
+                "success": success,
+                "data": data,
                 "error": task_result.get("error"),
             }
 
-            if not task_result.get("success", False):
-                context["errors"][dependency] = task_result.get("error") or "依赖任务执行失败"
+            if success:
+                context["resolved_dependencies"].append(dependency)
+            else:
+                context["errors"][dependency] = task_result.get("error") or "dependency task failed"
+                context["failed_dependencies"].append(dependency)
 
-            data = self._extract_result_data(task_result)
             if tool_name == "search_flights":
                 context["flights"] = self._safe_list(data, "flights")
             elif tool_name == "search_hotels":
@@ -890,8 +952,31 @@ class TravelAgent:
                 context["attractions"] = self._safe_list(data, "attractions")
             elif tool_name == "retrieve_guide":
                 context["guide"] = data if isinstance(data, dict) else None
+            elif tool_name == "get_weather_forecast":
+                context["weather"] = data if isinstance(data, dict) else None
+            elif tool_name == "optimize_route_order":
+                context["routes"] = self._safe_list(data, "segments")
 
         return context
+
+    def _dependency_context_keys(self, context: Dict[str, Any]) -> List[str]:
+        """Return compact names of dependency data made available to a downstream task."""
+        keys = []
+        if context.get("flights"):
+            keys.append("flights")
+        if context.get("hotels"):
+            keys.append("hotels")
+        if context.get("attractions"):
+            keys.append("attractions")
+        if context.get("guide"):
+            keys.append("guide")
+        if context.get("weather"):
+            keys.append("weather")
+        if context.get("routes"):
+            keys.append("routes")
+        if context.get("errors"):
+            keys.append("errors")
+        return keys
 
     def _extract_result_data(self, task_result: Dict) -> Any:
         """提取标准工具结果中的data，兼容内部任务结果"""
@@ -1065,6 +1150,12 @@ class TravelAgent:
                 "error_type": meta.get("error_type"),
                 "result_summary": result_summary,
                 "source_count": self._count_trace_sources(data),
+                "dependency_ids": meta.get("dependency_ids"),
+                "resolved_dependencies": meta.get("resolved_dependencies"),
+                "missing_dependencies": meta.get("missing_dependencies"),
+                "failed_dependencies": meta.get("failed_dependencies"),
+                "dependency_context_keys": meta.get("dependency_context_keys"),
+                "dependency_error_count": meta.get("dependency_error_count"),
             })
 
         dynamic_source_count = len(dynamic_rag_context.get("sources", []) or [])

@@ -92,6 +92,7 @@ def test_planner_quality_script_runs_without_llm_or_key_leakage():
         cwd=PROJECT_ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=True,
         timeout=30,

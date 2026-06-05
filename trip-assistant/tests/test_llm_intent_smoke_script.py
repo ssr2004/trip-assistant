@@ -20,6 +20,7 @@ def test_llm_intent_smoke_script_supports_dry_run_without_network():
         ],
         cwd=PROJECT_ROOT,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=True,
         timeout=20,

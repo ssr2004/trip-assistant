@@ -149,6 +149,41 @@ def test_execution_trace_aggregates_runtime_tool_modes():
     assert trace["summary"]["template_task_count"] == 1
 
 
+def test_execution_trace_includes_dependency_resolution_metadata():
+    agent = TravelAgent()
+    task_result = {
+        "success": True,
+        "task": {"task_type": "generate_itinerary", "tool": "generate_itinerary", "name": "Itinerary"},
+        "result": {"metadata": {"source": "template_itinerary_generator"}, "data": {"itinerary": [1]}},
+        "meta": {
+            "duration_ms": 10,
+            "execution_mode": "template",
+            "result_summary": "itinerary_days=1",
+            "dependency_ids": ["search_attractions_1", "get_weather_forecast_1", "missing_task"],
+            "resolved_dependencies": ["search_attractions_1", "get_weather_forecast_1"],
+            "missing_dependencies": ["missing_task"],
+            "failed_dependencies": [],
+            "dependency_context_keys": ["attractions", "weather", "errors"],
+            "dependency_error_count": 1,
+        },
+    }
+
+    trace = agent._build_execution_trace({
+        "intent": {"intent": "travel_plan", "metadata": {"source": "rule"}},
+        "tasks": [task_result["task"]],
+        "task_results": [task_result],
+        "rag_context": [],
+    })
+
+    itinerary_step = next(step for step in trace["steps"] if step.get("tool") == "generate_itinerary")
+    assert itinerary_step["dependency_ids"] == ["search_attractions_1", "get_weather_forecast_1", "missing_task"]
+    assert itinerary_step["resolved_dependencies"] == ["search_attractions_1", "get_weather_forecast_1"]
+    assert itinerary_step["missing_dependencies"] == ["missing_task"]
+    assert itinerary_step["failed_dependencies"] == []
+    assert itinerary_step["dependency_context_keys"] == ["attractions", "weather", "errors"]
+    assert itinerary_step["dependency_error_count"] == 1
+
+
 def test_execution_trace_includes_llm_planner_metadata():
     agent = TravelAgent()
 

@@ -54,10 +54,19 @@ async def test_agent_injects_dependency_context_into_itinerary(agent):
             "depends_on": [],
         },
         {
+            "task_id": "get_weather_forecast_1",
+            "task_type": "tool_call",
+            "name": "查询天气",
+            "priority": 5,
+            "tool": "get_weather_forecast",
+            "params": {"city": "杭州", "days": 3},
+            "depends_on": [],
+        },
+        {
             "task_id": "generate_itinerary_1",
             "task_type": "generate_itinerary",
             "name": "生成旅行行程",
-            "priority": 5,
+            "priority": 6,
             "tool": "generate_itinerary",
             "params": {"origin": "郑州", "destination": "杭州", "duration": 3, "budget": 3000},
             "depends_on": [
@@ -65,6 +74,7 @@ async def test_agent_injects_dependency_context_into_itinerary(agent):
                 "search_hotels_1",
                 "search_attractions_1",
                 "retrieve_guide_1",
+                "get_weather_forecast_1",
             ],
         },
     ]
@@ -77,7 +87,22 @@ async def test_agent_injects_dependency_context_into_itinerary(agent):
     assert context_summary["hotel_count"] == 3
     assert context_summary["attraction_count"] == 4
     assert context_summary["has_guide"] is True
+    assert context_summary["has_weather"] is True
+    assert context_summary["weather_forecast_count"] >= 1
     assert context_summary["dependency_error_count"] == 0
+
+    itinerary_meta = result["task_results"][-1]["meta"]
+    assert itinerary_meta["dependency_ids"] == [
+        "search_flights_1",
+        "search_hotels_1",
+        "search_attractions_1",
+        "retrieve_guide_1",
+        "get_weather_forecast_1",
+    ]
+    assert itinerary_meta["resolved_dependencies"] == itinerary_meta["dependency_ids"]
+    assert itinerary_meta["missing_dependencies"] == []
+    assert itinerary_meta["failed_dependencies"] == []
+    assert set(itinerary_meta["dependency_context_keys"]) >= {"flights", "hotels", "attractions", "guide", "weather"}
 
 
 @pytest.mark.asyncio
@@ -113,6 +138,8 @@ async def test_agent_keeps_running_when_dependency_fails(agent):
     assert itinerary_result["success"] is True
     assert context_summary["flight_count"] == 0
     assert context_summary["dependency_error_count"] == 1
+    assert itinerary_result["meta"]["failed_dependencies"] == ["search_flights_1"]
+    assert itinerary_result["meta"]["dependency_error_count"] == 1
 
 
 def test_dependency_context_does_not_mutate_original_params(agent):
@@ -126,7 +153,30 @@ def test_dependency_context_does_not_mutate_original_params(agent):
     injected = agent._inject_dependency_context(task, task["params"], {})
 
     assert "context" not in task["params"]
-    assert injected["context"]["errors"]["missing_task"] == "依赖任务尚未执行或不存在"
+    assert "missing_task" in injected["context"]["errors"]
+    assert injected["context"]["missing_dependencies"] == ["missing_task"]
+
+
+def test_dependency_metadata_indexes_missing_and_failed_dependencies(agent):
+    """Dependency metadata gives trace-safe indexes for downstream tasks."""
+    failed_result = {
+        "task": {"task_id": "search_flights_1", "task_type": "tool_call", "tool": "search_flights"},
+        "success": False,
+        "result": {"success": False, "data": {"flights": []}, "error": "missing destination"},
+        "error": "missing destination",
+    }
+
+    metadata = agent._resolve_dependency_metadata(
+        ["search_flights_1", "missing_task"],
+        {"search_flights_1": failed_result},
+    )
+
+    assert metadata["dependency_ids"] == ["search_flights_1", "missing_task"]
+    assert metadata["resolved_dependencies"] == []
+    assert metadata["failed_dependencies"] == ["search_flights_1"]
+    assert metadata["missing_dependencies"] == ["missing_task"]
+    assert metadata["dependency_error_count"] == 2
+    assert metadata["dependency_context_keys"] == ["errors"]
 
 
 def test_template_planner_declares_itinerary_dependencies():
