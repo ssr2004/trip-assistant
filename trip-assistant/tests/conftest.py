@@ -13,3 +13,4 @@ def isolate_real_external_api_keys(monkeypatch):
     monkeypatch.setattr(settings, "AMADEUS_API_SECRET", "")
     monkeypatch.setattr(settings, "AMAP_API_KEY", "")
     monkeypatch.setattr(settings, "WEATHER_API_KEY", "")
+    monkeypatch.setattr(settings, "EMBEDDING_API_KEY", "")

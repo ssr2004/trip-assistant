@@ -21,6 +21,9 @@ class RetrievedChunk(BaseModel):
     document_id: str = Field("", description="所属文档标识")
     section: Optional[str] = Field(None, description="所属Markdown章节")
     chunk_index: int = Field(0, description="片段在文档中的序号")
+    keyword_score: float = Field(0.0, description="关键词检索分数")
+    vector_score: float = Field(0.0, description="向量相似度分数")
+    retrieval_strategy: str = Field("keyword", description="命中策略，如keyword、vector或hybrid")
 
 
 class RetrievalResult(BaseModel):

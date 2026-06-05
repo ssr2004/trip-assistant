@@ -22,3 +22,6 @@ def test_settings_defaults_are_project_aligned():
     assert settings.LLM_BASE_URL == "https://api.deepseek.com"
     assert settings.LLM_PLANNER_MODE == "auto"
     assert settings.LLM_PLANNER_COMPLEXITY_THRESHOLD == 3
+    assert settings.EMBEDDING_PROVIDER == "openai"
+    assert settings.EMBEDDING_MODEL == "text-embedding-v4"
+    assert settings.EMBEDDING_BASE_URL == "https://dashscope.aliyuncs.com/compatible-mode/v1"

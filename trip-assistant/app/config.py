@@ -32,9 +32,9 @@ class Settings(BaseSettings):
 
     # Embedding配置
     EMBEDDING_PROVIDER: str = "openai"  # openai, zhipu
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_MODEL: str = "text-embedding-v4"
     EMBEDDING_API_KEY: str = ""
-    EMBEDDING_BASE_URL: str = "https://api.openai.com/v1"
+    EMBEDDING_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     # RAG配置
     RAG_TOP_K: int = 5
