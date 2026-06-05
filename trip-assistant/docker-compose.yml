@@ -1,34 +1,36 @@
-# 旅行AI助手 Docker Compose
-
-version: '3.8'
+# TravelMind local development compose stack
 
 services:
   app:
     build: .
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
-      - ./.env:/app/.env
     environment:
       - PYTHONUNBUFFERED=1
       - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=sqlite:///./data/travelmind.db
+      - EXTERNAL_API_CACHE_BACKEND=redis
     depends_on:
       - redis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
     restart: unless-stopped
 
-  # 可选: 添加前端服务
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "3000:3000"
-  #   depends_on:
-  #     - app
+volumes:
+  redis-data:

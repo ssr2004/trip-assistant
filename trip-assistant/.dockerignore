@@ -8,6 +8,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
 # Local environments and secrets
 .env
@@ -22,7 +24,13 @@ data/
 *.db
 *.sqlite
 local-docs/
+logs/
 
 # Development-only files
 tests/
 frontend/
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/

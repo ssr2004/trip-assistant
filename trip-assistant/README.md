@@ -130,10 +130,14 @@ cp .env.example .env
 ```text
 LLM_API_KEY
 LLM_BASE_URL
+EMBEDDING_API_KEY
+EMBEDDING_BASE_URL
 AMADEUS_API_KEY
 AMADEUS_API_SECRET
 AMAP_API_KEY
+WEATHER_API_KEY
 DATABASE_URL
+REDIS_URL
 ```
 
 ### 5. 启动后端服务
@@ -150,9 +154,20 @@ http://localhost:8000/
 
 ## Docker 启动
 
+启动前先准备本地 `.env`，真实 Key 只写入本地 `.env`，不要提交：
+
 ```bash
+cp .env.example .env
 docker-compose up -d
 ```
+
+服务默认暴露：
+
+```text
+http://localhost:8000/
+```
+
+`docker-compose.yml` 会将 `./data` 挂载到容器 `/app/data`，用于 SQLite、长期记忆和运行历史等本地数据。Redis 仅在 compose 内部网络暴露给后端服务，不默认映射到宿主机。
 
 ## API 示例
 
@@ -180,6 +195,18 @@ ws://localhost:8000/ws/chat
 
 ```powershell
 python -m pytest
+```
+
+完整本地质量门禁：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_quality_gate.py
+```
+
+需要机器可读结果时：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_quality_gate.py --json-compact
 ```
 
 当前已覆盖：
