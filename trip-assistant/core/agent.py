@@ -18,6 +18,7 @@ from core.memory.manager import MemoryManager
 from core.intent import IntentParser
 from core.response_builder import ResponseBuilder
 from core.artifacts import normalize_chat_artifacts
+from core.session_history import SessionHistoryStore
 from core.trace import normalize_execution_trace
 from rag.dynamic_store import DynamicRAGStore
 from rag.retriever import RAGRetriever
@@ -42,6 +43,7 @@ class TravelAgent:
         self.session_itinerary_contexts = {}
         self.tool_registry = ToolRegistry()
         self.response_builder = ResponseBuilder()
+        self.session_history_store = SessionHistoryStore()
 
         # 构建工作流图
         self.graph = self._build_graph()
@@ -1256,8 +1258,15 @@ class TravelAgent:
     async def arun_with_artifacts(self, message: str, session_id: str) -> Dict[str, Any]:
         """异步运行Agent，并返回可供前端展示的结构化结果"""
         config = {"configurable": {"thread_id": session_id}}
-        result = await self.graph.ainvoke(self._build_initial_state(message, session_id), config)
-        return self._build_agent_output(result)
+        state = await self.graph.ainvoke(self._build_initial_state(message, session_id), config)
+        output = self._build_agent_output(state)
+        output["history_persistence"] = self._persist_agent_run(
+            message=message,
+            session_id=session_id,
+            state=state,
+            output=output,
+        )
+        return output
 
     def _build_initial_state(self, message: str, session_id: str) -> AgentState:
         """Build the LangGraph state owned by the agent runtime."""
@@ -1283,6 +1292,33 @@ class TravelAgent:
             "artifacts": self._build_response_artifacts(task_results),
             "execution_trace": self._build_execution_trace(state),
         }
+
+    def _persist_agent_run(
+        self,
+        message: str,
+        session_id: str,
+        state: Dict[str, Any],
+        output: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Persist complete run history without changing the public chat contract."""
+        try:
+            record = self.session_history_store.save_run(
+                session_id=session_id,
+                user_message=message,
+                ai_message=output.get("response", ""),
+                artifacts=output.get("artifacts", {}),
+                execution_trace=output.get("execution_trace", {}),
+                intent=state.get("intent") if isinstance(state.get("intent"), dict) else {},
+                task_results=state.get("task_results", []) or [],
+            )
+            return {"enabled": True, "stored": True, **record}
+        except Exception as exc:
+            return {
+                "enabled": True,
+                "stored": False,
+                "error_type": exc.__class__.__name__,
+                "recoverable": True,
+            }
 
     def _build_execution_trace(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Build a sanitized execution timeline for frontend observability."""
@@ -1668,7 +1704,14 @@ class TravelAgent:
 
     def get_history(self, session_id: str) -> List[Dict]:
         """获取对话历史"""
-        return self.memory_manager.get_history(session_id)
+        history = self.memory_manager.get_history(session_id)
+        if history:
+            return history
+        return self.session_history_store.get_recent_messages(session_id)
+
+    def get_session_runs(self, session_id: str, limit: int = 20) -> List[Dict]:
+        """获取持久化Agent运行历史"""
+        return self.session_history_store.list_runs(session_id, limit=limit)
 
     def clear_history(self, session_id: str):
         """清除对话历史、会话动态RAG文档和行程上下文"""
@@ -1676,3 +1719,4 @@ class TravelAgent:
         key = session_id or "default"
         self.dynamic_rag_stores.pop(key, None)
         self.session_itinerary_contexts.pop(key, None)
+        self.session_history_store.clear_session(key)

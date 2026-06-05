@@ -257,6 +257,17 @@ async def get_history(session_id: str):
     return {"session_id": session_id, "history": history}
 
 
+@app.get("/api/history/{session_id}/runs")
+async def get_session_runs(session_id: str, limit: int = 20):
+    """获取会话运行历史，包括artifact和execution trace"""
+    runs = agent.get_session_runs(session_id, limit=limit)
+    return {
+        "session_id": session_id,
+        "runs": runs,
+        "count": len(runs),
+    }
+
+
 @app.delete("/api/history/{session_id}")
 async def clear_history(session_id: str):
     """清除对话历史"""
