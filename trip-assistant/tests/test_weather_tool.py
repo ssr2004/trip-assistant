@@ -18,6 +18,9 @@ async def test_weather_tool_returns_standard_result():
     assert result["metadata"]["tool"] == "get_weather_forecast"
     assert result["metadata"]["source"] == "weather_mock"
     assert result["metadata"]["mock"] is True
+    assert result["metadata"]["execution_mode"] == "mock_fallback"
+    assert result["metadata"]["api_status"] == "degraded"
+    assert result["metadata"]["cache_write"] is False
     assert result["data"]["city"] == "杭州"
     assert len(result["data"]["forecasts"]) == 3
     assert result["data"]["travel_advice"]

@@ -8,6 +8,24 @@ from abc import ABC, abstractmethod
 from models.tool import ToolResult
 
 
+EXTERNAL_OBSERVABILITY_KEYS = {
+    "api_status",
+    "execution_mode",
+    "fallback_reason",
+    "fallback_used",
+    "mock_reason",
+    "error_type",
+    "attempt_count",
+    "retry_count",
+    "cache_enabled",
+    "cache_hit",
+    "cache_backend",
+    "cache_ttl",
+    "cache_write",
+    "cache_error",
+}
+
+
 class BaseTool(ABC):
     """工具基类"""
 
@@ -60,6 +78,17 @@ class BaseTool(ABC):
         merged_metadata = dict(metadata or {})
         merged_metadata.setdefault("tool", self.name)
         return merged_metadata
+
+    def external_metadata(self, api_metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """提取外部API脱敏观测字段，供工具结果和trace透传。"""
+        metadata = {}
+        for key in EXTERNAL_OBSERVABILITY_KEYS:
+            value = (api_metadata or {}).get(key)
+            if value is not None:
+                metadata[key] = value
+        if (api_metadata or {}).get("source"):
+            metadata["external_source"] = api_metadata["source"]
+        return metadata
 
 
 class ToolRegistry:

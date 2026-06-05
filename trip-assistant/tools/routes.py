@@ -40,6 +40,19 @@ class RouteTool(BaseTool):
             )
 
         api_result = await self.route_client.distance_matrix(places, places, mode=mode)
+        if not api_result.get("success"):
+            api_metadata = api_result.get("metadata", {}) if isinstance(api_result, dict) else {}
+            return self.error_result(
+                error=api_result.get("error") or "路线距离查询失败",
+                data={"ordered_places": places, "segments": [], "total_distance": 0, "total_duration": 0},
+                metadata={
+                    **self.external_metadata(api_metadata),
+                    "source": "amap_route",
+                    "provider": "amap",
+                    "mock": False,
+                },
+            )
+
         distances = self._extract_distances(api_result)
         ordered_places = self._greedy_order(places, distances, start_place)
         segments = self._build_segments(ordered_places, distances)
@@ -58,6 +71,7 @@ class RouteTool(BaseTool):
                 "mode": mode,
             },
             metadata={
+                **self.external_metadata(api_metadata),
                 "source": "amap_route_mock" if is_mock else "amap_route",
                 "provider": "amap",
                 "mock": is_mock,

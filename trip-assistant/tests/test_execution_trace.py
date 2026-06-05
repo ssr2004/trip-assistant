@@ -113,6 +113,11 @@ def test_execution_trace_aggregates_runtime_tool_modes():
             "duration_ms": 30,
             "execution_mode": "real_api",
             "result_summary": "attractions=2",
+            "provider": "amap",
+            "api_status": "success",
+            "cache_hit": True,
+            "cache_backend": "memory",
+            "cache_write": False,
         },
     }
     mock_result = {
@@ -147,6 +152,14 @@ def test_execution_trace_aggregates_runtime_tool_modes():
     assert trace["summary"]["real_api_count"] == 1
     assert trace["summary"]["mock_fallback_count"] == 1
     assert trace["summary"]["template_task_count"] == 1
+    assert trace["summary"]["api_cache_hit_count"] == 1
+    assert trace["summary"]["api_cache_write_count"] == 0
+    assert trace["summary"]["external_api_degraded_count"] == 0
+    real_api_step = next(step for step in trace["steps"] if step.get("tool") == "search_attractions")
+    assert real_api_step["provider"] == "amap"
+    assert real_api_step["api_status"] == "success"
+    assert real_api_step["cache_hit"] is True
+    assert real_api_step["cache_backend"] == "memory"
     assert trace["summary"]["degraded_count"] == 0
     assert trace["summary"]["fallback_used_count"] == 0
     assert trace["summary"]["recoverable_failure_count"] == 0

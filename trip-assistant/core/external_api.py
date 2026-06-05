@@ -6,6 +6,7 @@ import asyncio
 from typing import Any, Callable, Dict, Optional
 
 import requests
+from requests import exceptions as request_exceptions
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -84,9 +85,18 @@ class ExternalAPIClient:
         if not self.available():
             if self.mock_enabled:
                 return self.mock_response(mock_data=mock_data, reason="api_key_missing")
-            return self.error_response("API Key未配置，且mock fallback未启用。", mock=False)
+            return self.error_response(
+                "API Key未配置，且mock fallback未启用。",
+                mock=False,
+                metadata={
+                    "api_status": "unavailable",
+                    "execution_mode": "unavailable",
+                    "error_type": "api_key_missing",
+                },
+            )
 
         last_error = None
+        last_error_type = None
         attempts = max(self.retry_times, 0) + 1
         for attempt in range(1, attempts + 1):
             try:
@@ -106,25 +116,63 @@ class ExternalAPIClient:
                 return self.success_response(
                     data=data,
                     mock=False,
-                    metadata={"url": url, "method": method.upper(), "attempt": attempt},
+                    metadata={
+                        "url": url,
+                        "method": method.upper(),
+                        "attempt": attempt,
+                        "attempt_count": attempt,
+                        "retry_count": attempt - 1,
+                        "api_status": "success",
+                        "execution_mode": "real_api",
+                    },
                 )
             except Exception as exc:  # pragma: no cover - 网络错误分支由注入请求函数测试
                 last_error = str(exc)
+                last_error_type = self._classify_exception(exc)
 
         if self.mock_enabled:
-            return self.mock_response(mock_data=mock_data, reason=last_error or "request_failed")
-        return self.error_response(last_error or "外部API请求失败。", mock=False)
+            return self.mock_response(
+                mock_data=mock_data,
+                reason=last_error_type or last_error or "request_failed",
+                metadata={
+                    "api_status": "degraded",
+                    "error_type": last_error_type or "request_failed",
+                    "upstream_error": last_error,
+                    "attempt_count": attempts,
+                    "retry_count": max(attempts - 1, 0),
+                },
+            )
+        return self.error_response(
+            last_error or "外部API请求失败。",
+            mock=False,
+            metadata={
+                "api_status": "failed",
+                "execution_mode": "real_api_failed",
+                "error_type": last_error_type or "request_failed",
+                "attempt_count": attempts,
+                "retry_count": max(attempts - 1, 0),
+            },
+        )
 
     def mock_response(
         self,
         mock_data: Optional[Dict[str, Any]] = None,
         reason: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """构建mock fallback响应"""
+        merged_metadata = dict(metadata or {})
+        merged_metadata.update({
+            "mock_reason": reason or "mock_enabled",
+            "fallback_reason": reason or "mock_enabled",
+            "fallback_used": True,
+            "api_status": merged_metadata.get("api_status") or "degraded",
+            "execution_mode": "mock_fallback",
+        })
         return self.success_response(
             data=mock_data or {},
             mock=True,
-            metadata={"mock_reason": reason or "mock_enabled"},
+            metadata=merged_metadata,
         )
 
     def success_response(
@@ -161,4 +209,19 @@ class ExternalAPIClient:
         merged.setdefault("provider", self.name)
         merged.setdefault("mock", mock)
         merged.setdefault("source", "external_api")
+        merged.setdefault("api_status", "degraded" if mock else "success")
+        merged.setdefault("execution_mode", "mock_fallback" if mock else "real_api")
+        merged.setdefault("fallback_used", bool(mock))
         return merged
+
+    def _classify_exception(self, exc: Exception) -> str:
+        """将requests异常映射为稳定错误类型，避免上层依赖原始异常文本。"""
+        if isinstance(exc, request_exceptions.Timeout):
+            return "timeout"
+        if isinstance(exc, request_exceptions.HTTPError):
+            return "http_error"
+        if isinstance(exc, request_exceptions.ConnectionError):
+            return "network_error"
+        if isinstance(exc, ValueError):
+            return "invalid_json"
+        return "request_failed"

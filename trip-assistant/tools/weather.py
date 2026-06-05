@@ -34,10 +34,16 @@ class WeatherTool(BaseTool):
 
         api_result = await self.weather_client.forecast(city=city, days=days)
         if not api_result.get("success"):
+            api_metadata = api_result.get("metadata", {}) if isinstance(api_result, dict) else {}
             return self.error_result(
                 error=api_result.get("error") or "天气查询失败",
                 data={"city": city, "forecasts": [], "travel_advice": []},
-                metadata={"source": "weather_api", "provider": "weather", "mock": False},
+                metadata={
+                    **self.external_metadata(api_metadata),
+                    "source": "weather_api",
+                    "provider": "weather",
+                    "mock": False,
+                },
             )
 
         data = api_result.get("data", {}) or {}
@@ -51,6 +57,7 @@ class WeatherTool(BaseTool):
                 "travel_advice": self._build_travel_advice(forecasts),
             },
             metadata={
+                **self.external_metadata(api_metadata),
                 "source": "weather_mock" if is_mock else "weather_api",
                 "provider": "weather",
                 "mock": is_mock,

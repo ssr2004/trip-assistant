@@ -3,6 +3,7 @@
 """
 import pytest
 
+from core.cache import ExternalAPICache, MemoryCacheBackend
 from core.weather_client import WeatherClient
 
 
@@ -111,6 +112,8 @@ async def test_weather_client_falls_back_when_amap_business_error():
     assert result["success"] is True
     assert result["metadata"]["mock"] is True
     assert result["metadata"]["mock_reason"] == "INVALID_USER_KEY"
+    assert result["metadata"]["fallback_reason"] == "INVALID_USER_KEY"
+    assert result["metadata"]["api_status"] == "degraded"
     assert result["data"]["forecasts"][0]["weather"] == "小雨"
 
 
@@ -124,3 +127,53 @@ def test_weather_client_uses_amap_key_as_default(monkeypatch):
     client = WeatherClient(api_key=None)
 
     assert client.client.api_key == "amap-key-from-env"
+
+
+@pytest.mark.asyncio
+async def test_weather_client_caches_real_forecast_without_caching_mock():
+    """真实天气响应会缓存，mock fallback不会污染真实API缓存"""
+    calls = []
+
+    def fake_request(method, url, params=None, headers=None, json=None, timeout=None):
+        calls.append({"method": method, "url": url, "params": params})
+        return FakeHTTPResponse({
+            "status": "1",
+            "info": "OK",
+            "forecasts": [
+                {
+                    "city": "杭州市",
+                    "adcode": "330100",
+                    "province": "浙江",
+                    "reporttime": "2026-06-04 11:00:00",
+                    "casts": [
+                        {
+                            "date": "2026-06-10",
+                            "week": "3",
+                            "dayweather": "晴",
+                            "nightweather": "晴",
+                            "daytemp": "31",
+                            "nighttemp": "24",
+                            "daywind": "北",
+                            "daypower": "≤3",
+                        },
+                    ],
+                }
+            ],
+        })
+
+    cache = ExternalAPICache(backend=MemoryCacheBackend(), enabled=True, ttl=3600)
+    client = WeatherClient(
+        api_key="test-amap-key",
+        request_func=fake_request,
+        mock_enabled=False,
+        cache=cache,
+    )
+
+    first_result = await client.forecast(city="杭州", days=1)
+    second_result = await client.forecast(city="杭州", days=1)
+
+    assert len(calls) == 1
+    assert first_result["metadata"]["cache_hit"] is False
+    assert first_result["metadata"]["cache_write"] is True
+    assert second_result["metadata"]["cache_hit"] is True
+    assert second_result["data"]["forecasts"][0]["weather"] == "晴"

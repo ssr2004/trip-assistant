@@ -62,6 +62,7 @@ class AttractionTool(BaseTool):
                     "rag_documents": rag_documents,
                 },
                 metadata={
+                    **self.external_metadata(api_metadata),
                     "source": "amap_poi_mock" if is_mock else "amap_poi",
                     "provider": "amap",
                     "mock": is_mock,
@@ -70,6 +71,7 @@ class AttractionTool(BaseTool):
             )
 
         attractions = self._get_mock_attractions(location, keywords)
+        api_metadata = api_result.get("metadata", {}) if isinstance(api_result, dict) else {}
         return self.success_result(
             data={
                 "location": location,
@@ -78,9 +80,13 @@ class AttractionTool(BaseTool):
                 "rag_documents": [],
             },
             metadata={
+                **self.external_metadata(api_metadata),
                 "source": "mock_attraction_data",
                 "provider": "local",
                 "mock": True,
+                "api_status": "degraded",
+                "execution_mode": "mock_fallback",
+                "fallback_used": True,
                 "fallback_reason": api_result.get("error") or "amap_poi_empty",
                 "count": len(attractions),
             },

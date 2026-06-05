@@ -66,7 +66,8 @@ class AMapPOIClient:
             params=params,
             mock_data=self._mock_poi_response(city),
         )
-        if result.get("success"):
+        result = self._normalize_response(result, city)
+        if result.get("success") and not (result.get("metadata", {}) or {}).get("mock"):
             write_metadata = await self.cache.set(
                 provider="amap",
                 resource="poi",
@@ -78,6 +79,34 @@ class AMapPOIClient:
             cache_metadata["cache_write"] = False
         cache_metadata["cache_hit"] = False
         return self._with_cache_metadata(result, cache_metadata)
+
+    def _normalize_response(self, result: Dict[str, Any], city: str) -> Dict[str, Any]:
+        """处理高德业务状态码，避免HTTP成功但业务失败被误判为真实数据。"""
+        if not result.get("success"):
+            return result
+        metadata = result.get("metadata", {}) or {}
+        if metadata.get("mock"):
+            return result
+        data = result.get("data", {}) or {}
+        if str(data.get("status")) == "1":
+            return result
+
+        reason = data.get("info") or "amap_poi_business_error"
+        if self.client.mock_enabled:
+            return self.client.mock_response(
+                mock_data=self._mock_poi_response(city),
+                reason=str(reason),
+                metadata={"api_status": "degraded", "error_type": "business_error"},
+            )
+        return self.client.error_response(
+            str(reason),
+            mock=False,
+            metadata={
+                "api_status": "failed",
+                "execution_mode": "real_api_failed",
+                "error_type": "business_error",
+            },
+        )
 
     def _cache_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """构建不含敏感Key的缓存参数"""

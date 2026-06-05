@@ -5,6 +5,7 @@
 from typing import Any, Callable, Dict, List, Optional
 
 from app.config import settings
+from core.cache import ExternalAPICache, create_external_api_cache
 from core.external_api import ExternalAPIClient
 
 
@@ -36,6 +37,7 @@ class WeatherClient:
         api_key: Optional[str] = None,
         request_func: Optional[Callable[..., Any]] = None,
         mock_enabled: Optional[bool] = None,
+        cache: Optional[ExternalAPICache] = None,
     ):
         """初始化天气客户端"""
         resolved_key = (settings.WEATHER_API_KEY or settings.AMAP_API_KEY) if api_key is None else api_key
@@ -47,6 +49,7 @@ class WeatherClient:
             mock_enabled=mock_enabled,
             request_func=request_func,
         )
+        self.cache = cache or create_external_api_cache()
 
     async def forecast(self, city: str, days: int = 3) -> Dict[str, Any]:
         """查询城市天气预报"""
@@ -57,13 +60,30 @@ class WeatherClient:
             "extensions": "all",
             "output": "JSON",
         }
+        cache_params = self._cache_params(params, days)
+        cached_result, cache_metadata = await self.cache.get("weather", "forecast", cache_params)
+        if cached_result:
+            return self._with_cache_metadata(cached_result, cache_metadata)
+
         result = await self.client.request_json(
             method="GET",
             url=self.FORECAST_URL,
             params=params,
             mock_data=self._mock_forecast(city, days),
         )
-        return self._normalize_response(result, city, days)
+        result = self._normalize_response(result, city, days)
+        if result.get("success") and not (result.get("metadata", {}) or {}).get("mock"):
+            write_metadata = await self.cache.set(
+                provider="weather",
+                resource="forecast",
+                params=cache_params,
+                value=self._without_cache_metadata(result),
+            )
+            cache_metadata.update(write_metadata)
+        else:
+            cache_metadata["cache_write"] = False
+        cache_metadata["cache_hit"] = False
+        return self._with_cache_metadata(result, cache_metadata)
 
     def _resolve_city_code(self, city: str) -> str:
         """将常见城市名转换为高德adcode，未命中时保留原值"""
@@ -83,14 +103,38 @@ class WeatherClient:
         if str(data.get("status")) != "1":
             reason = data.get("info") or "amap_weather_business_error"
             if self.client.mock_enabled:
-                return self.client.mock_response(mock_data=self._mock_forecast(city, days), reason=reason)
-            return self.client.error_response(str(reason), mock=False)
+                return self.client.mock_response(
+                    mock_data=self._mock_forecast(city, days),
+                    reason=reason,
+                    metadata={"api_status": "degraded", "error_type": "business_error"},
+                )
+            return self.client.error_response(
+                str(reason),
+                mock=False,
+                metadata={
+                    "api_status": "failed",
+                    "execution_mode": "real_api_failed",
+                    "error_type": "business_error",
+                },
+            )
 
         forecasts = data.get("forecasts") or []
         if not forecasts:
             if self.client.mock_enabled:
-                return self.client.mock_response(mock_data=self._mock_forecast(city, days), reason="amap_weather_empty")
-            return self.client.error_response("高德天气返回为空。", mock=False)
+                return self.client.mock_response(
+                    mock_data=self._mock_forecast(city, days),
+                    reason="amap_weather_empty",
+                    metadata={"api_status": "degraded", "error_type": "empty_response"},
+                )
+            return self.client.error_response(
+                "高德天气返回为空。",
+                mock=False,
+                metadata={
+                    "api_status": "failed",
+                    "execution_mode": "real_api_failed",
+                    "error_type": "empty_response",
+                },
+            )
 
         forecast_block = forecasts[0] or {}
         casts = forecast_block.get("casts") or []
@@ -103,6 +147,31 @@ class WeatherClient:
             "forecasts": normalized_forecasts,
         }
         return self.client.success_response(data=normalized, mock=False, metadata=metadata)
+
+    def _cache_params(self, params: Dict[str, Any], days: int) -> Dict[str, Any]:
+        """构建不含敏感Key的缓存参数。"""
+        cache_params = {key: value for key, value in params.items() if key != "key"}
+        cache_params["days"] = days
+        return cache_params
+
+    def _with_cache_metadata(self, result: Dict[str, Any], cache_metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """将缓存元数据合并到外部API响应。"""
+        merged = dict(result)
+        metadata = dict(result.get("metadata", {}) or {})
+        metadata.update(cache_metadata)
+        merged["metadata"] = metadata
+        return merged
+
+    def _without_cache_metadata(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """构建可缓存响应，避免缓存命中信息被持久化。"""
+        cached = dict(result)
+        metadata = {
+            key: value
+            for key, value in (result.get("metadata", {}) or {}).items()
+            if not key.startswith("cache_")
+        }
+        cached["metadata"] = metadata
+        return cached
 
     def _normalize_cast(self, cast: Dict[str, Any]) -> Dict[str, Any]:
         """标准化高德单日天气预报"""

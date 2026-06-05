@@ -2,6 +2,7 @@
 外部API客户端基础设施测试
 """
 import pytest
+from requests import exceptions as request_exceptions
 
 from core.external_api import ExternalAPIClient, ExternalAPIResponse, ExternalDataSource
 
@@ -85,6 +86,8 @@ async def test_request_json_fails_when_key_missing_and_mock_disabled():
     assert "API Key" in result["error"]
     assert result["metadata"]["provider"] == "amap"
     assert result["metadata"]["mock"] is False
+    assert result["metadata"]["error_type"] == "api_key_missing"
+    assert result["metadata"]["api_status"] == "unavailable"
 
 
 @pytest.mark.asyncio
@@ -123,5 +126,36 @@ async def test_request_json_uses_injected_request_function_when_key_exists():
     assert result["metadata"]["provider"] == "amap"
     assert result["metadata"]["mock"] is False
     assert result["metadata"]["attempt"] == 1
+    assert result["metadata"]["execution_mode"] == "real_api"
+    assert result["metadata"]["api_status"] == "success"
     assert calls[0]["timeout"] == 3
     assert calls[0]["params"] == {"city": "杭州"}
+
+
+@pytest.mark.asyncio
+async def test_request_json_classifies_timeout_and_falls_back_to_mock():
+    """请求超时时返回稳定错误类型并降级到mock"""
+    def fake_request(method, url, params=None, headers=None, json=None, timeout=None):
+        raise request_exceptions.Timeout("upstream timeout")
+
+    client = ExternalAPIClient(
+        name="amap",
+        api_key="test-key",
+        retry_times=1,
+        mock_enabled=True,
+        request_func=fake_request,
+    )
+
+    result = await client.request_json(
+        method="GET",
+        url="https://example.com/poi",
+        mock_data={"pois": [{"name": "西湖"}]},
+    )
+
+    assert result["success"] is True
+    assert result["metadata"]["mock"] is True
+    assert result["metadata"]["execution_mode"] == "mock_fallback"
+    assert result["metadata"]["error_type"] == "timeout"
+    assert result["metadata"]["fallback_reason"] == "timeout"
+    assert result["metadata"]["attempt_count"] == 2
+    assert result["metadata"]["retry_count"] == 1

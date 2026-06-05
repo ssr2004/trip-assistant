@@ -268,6 +268,7 @@ class TravelAgent:
             "error_type": error_type or self._resolve_error_type(task_result),
             "result_summary": self._summarize_trace_result(task_result, data),
         }
+        meta.update(self._extract_external_observability(task_result))
         recovery_metadata = self._resolve_recovery_metadata(
             task_result=task_result,
             data=data,
@@ -314,6 +315,10 @@ class TravelAgent:
         if task_type in {"ask_user", "recommend_destination"}:
             return "internal_rule"
 
+        declared_mode = metadata.get("execution_mode")
+        if declared_mode in {"real_api", "mock_fallback", "real_api_failed", "unavailable", "local_data"}:
+            return str(declared_mode)
+
         source = str(metadata.get("source") or "")
         if metadata.get("mock") is True:
             return "mock_fallback"
@@ -328,6 +333,23 @@ class TravelAgent:
             if generation_mode in {"llm", "template"}:
                 return str(generation_mode)
         return "tool"
+
+    def _extract_external_observability(self, task_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Copy sanitized external API metadata into task meta for trace aggregation."""
+        result = task_result.get("result")
+        metadata = result.get("metadata", {}) if isinstance(result, dict) else {}
+        observed_keys = {
+            "provider",
+            "api_status",
+            "cache_hit",
+            "cache_backend",
+            "cache_write",
+        }
+        return {
+            key: metadata[key]
+            for key in observed_keys
+            if key in metadata and metadata[key] is not None
+        }
 
     def _resolve_error_type(self, task_result: Dict[str, Any]) -> str | None:
         """Classify non-exception task failures for trace display."""
@@ -1339,6 +1361,11 @@ class TravelAgent:
                 "fallback_used": meta.get("fallback_used"),
                 "recovery_strategy": meta.get("recovery_strategy"),
                 "degradation_reason": meta.get("degradation_reason"),
+                "provider": meta.get("provider"),
+                "api_status": meta.get("api_status"),
+                "cache_hit": meta.get("cache_hit"),
+                "cache_backend": meta.get("cache_backend"),
+                "cache_write": meta.get("cache_write"),
                 **memory_trace,
             })
 
@@ -1433,6 +1460,10 @@ class TravelAgent:
         recoverable_failure_count = 0
         fallback_used_count = 0
         unrecoverable_failure_count = 0
+        external_api_degraded_count = 0
+        external_api_failed_count = 0
+        api_cache_hit_count = 0
+        api_cache_write_count = 0
         recovery_strategy_counts: Dict[str, int] = {}
         for task_result in task_results:
             meta = task_result.get("meta", {}) or {}
@@ -1450,6 +1481,15 @@ class TravelAgent:
             strategy = str(meta.get("recovery_strategy") or "none")
             if strategy != "none":
                 recovery_strategy_counts[strategy] = recovery_strategy_counts.get(strategy, 0) + 1
+            api_status = str(meta.get("api_status") or "")
+            if api_status == "degraded":
+                external_api_degraded_count += 1
+            if api_status == "failed":
+                external_api_failed_count += 1
+            if meta.get("cache_hit") is True:
+                api_cache_hit_count += 1
+            if meta.get("cache_write") is True:
+                api_cache_write_count += 1
 
         llm_total_tokens = int(intent_metadata.get("llm_total_tokens") or 0)
         return {
@@ -1475,6 +1515,10 @@ class TravelAgent:
             "recoverable_failure_count": recoverable_failure_count,
             "fallback_used_count": fallback_used_count,
             "unrecoverable_failure_count": unrecoverable_failure_count,
+            "external_api_degraded_count": external_api_degraded_count,
+            "external_api_failed_count": external_api_failed_count,
+            "api_cache_hit_count": api_cache_hit_count,
+            "api_cache_write_count": api_cache_write_count,
             "recovery_strategy_counts": recovery_strategy_counts,
         }
 
