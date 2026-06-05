@@ -68,6 +68,7 @@ class MemoryManager:
         preferences = self.long_term.get_preferences(session_id)
         context["preferences"] = preferences
         context["user_preferences"] = preferences
+        context["planning_profile"] = preferences.get("planning_profile", {})
 
         # 从情景记忆获取相关交互
         context["relevant_interactions"] = self.episodic.search(query, session_id)

@@ -550,6 +550,7 @@ class TravelAgent:
             "budget": itinerary_data.get("budget"),
             "travelers": itinerary_data.get("travelers"),
             "preferences": itinerary_data.get("preferences", []),
+            "personalization_summary": copy.deepcopy(itinerary_data.get("personalization_summary", {})),
             "itinerary": copy.deepcopy(itinerary_data.get("itinerary", [])),
             "budget_summary": copy.deepcopy(itinerary_data.get("budget_summary", {})),
             "attractions": copy.deepcopy(attractions),
@@ -1309,6 +1310,7 @@ class TravelAgent:
             task_type = task.get("task_type") or "tool_call"
             tool_name = task.get("tool")
             label = task.get("name") or tool_name or task_type
+            memory_trace = self._task_memory_trace(task)
             success = bool(task_result.get("success"))
             data = self._extract_result_data(task_result)
             meta = task_result.get("meta", {}) or {}
@@ -1337,6 +1339,7 @@ class TravelAgent:
                 "fallback_used": meta.get("fallback_used"),
                 "recovery_strategy": meta.get("recovery_strategy"),
                 "degradation_reason": meta.get("degradation_reason"),
+                **memory_trace,
             })
 
         dynamic_source_count = len(dynamic_rag_context.get("sources", []) or [])
@@ -1371,6 +1374,10 @@ class TravelAgent:
             "llm_planner_fallback_reason": planner_metadata.get("fallback_reason") or planner_metadata.get("skip_reason") or "",
             "llm_planner_duration_ms": int(planner_metadata.get("llm_planner_duration_ms") or 0),
             "llm_planner_total_tokens": int(planner_metadata.get("llm_planner_total_tokens") or 0),
+            "memory_personalization_applied": bool(planner_metadata.get("memory_personalization_applied")),
+            "memory_preference_count": int(planner_metadata.get("memory_preference_count") or 0),
+            "memory_conflict_count": int(planner_metadata.get("memory_conflict_count") or 0),
+            "memory_preference_fields": planner_metadata.get("memory_preference_fields") or [],
             "task_count": len(tasks),
             "tool_count": sum(1 for task in tasks if task.get("tool")),
             "failed_count": sum(1 for result in task_results if not result.get("success")),
@@ -1390,10 +1397,25 @@ class TravelAgent:
         route_decision = planner_metadata.get("llm_planner_route_decision")
         if route_decision:
             detail = f"{detail}, route={route_decision}"
+        if planner_metadata.get("memory_personalization_applied"):
+            detail = f"{detail}, memory={int(planner_metadata.get('memory_preference_count') or 0)}"
         fallback_reason = planner_metadata.get("fallback_reason") or planner_metadata.get("skip_reason")
         if fallback_reason:
             detail = f"{detail}, reason={fallback_reason}"
         return detail
+
+    def _task_memory_trace(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract sanitized memory-personalization fields from task params."""
+        params = task.get("params", {}) if isinstance(task.get("params"), dict) else {}
+        profile = params.get("memory_profile") if isinstance(params.get("memory_profile"), dict) else {}
+        used_preferences = profile.get("used_preferences", []) if isinstance(profile, dict) else []
+        if not used_preferences:
+            return {}
+        return {
+            "memory_preference_source": params.get("memory_preference_source"),
+            "memory_used_preferences": used_preferences,
+            "memory_preference_count": int(profile.get("used_preference_count") or len(used_preferences)),
+        }
 
     def _build_runtime_metrics(self, intent_metadata: Dict[str, Any], task_results: List[Dict]) -> Dict[str, Any]:
         """Aggregate sanitized runtime counters for the trace summary."""

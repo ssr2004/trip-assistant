@@ -8,6 +8,7 @@ import json
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.llm.json_repair import parse_llm_json_object
 from core.llm.prompts import PLANNER_FALLBACK_SYSTEM_PROMPT
+from core.memory.preference_profile import PreferenceProfileBuilder
 from models.task import PlanningTask, TaskPlan
 
 
@@ -45,6 +46,7 @@ class TaskPlanner:
         self.llm_planner_mode = self._normalize_planner_mode(llm_planner_mode)
         self.llm_planner_enabled = self.llm_planner_mode != "off"
         self.llm_planner_complexity_threshold = max(int(llm_planner_complexity_threshold or 1), 1)
+        self.preference_profile_builder = PreferenceProfileBuilder()
         self.last_plan_metadata: Dict = self._base_plan_metadata()
 
     def plan(self, intent: Dict, context: Dict) -> List[Dict]:
@@ -67,6 +69,7 @@ class TaskPlanner:
         self.last_plan_metadata = {
             **self._base_plan_metadata(),
             **route_metadata,
+            **self._memory_plan_metadata(context),
             "planner_mode": "template",
             "llm_planner_attempted": False,
             "llm_planner_adopted": False,
@@ -97,6 +100,7 @@ class TaskPlanner:
             self.last_plan_metadata = {
                 **self._base_plan_metadata(),
                 **route_metadata,
+                **self._memory_plan_metadata(context),
                 "planner_mode": "template",
                 "llm_planner_attempted": False,
                 "llm_planner_adopted": False,
@@ -107,8 +111,10 @@ class TaskPlanner:
 
         llm_plan = await self._llm_plan(intent, context, template_plan)
         if llm_plan:
+            llm_plan = self._apply_memory_personalization(llm_plan, context)
             self.last_plan_metadata = {
                 **self.last_plan_metadata,
+                **self._memory_plan_metadata(context),
                 "planner_mode": "llm",
                 "llm_planner_adopted": True,
                 "llm_task_count": len(llm_plan.tasks),
@@ -117,6 +123,7 @@ class TaskPlanner:
             return [task.model_dump() for task in llm_plan.tasks]
         self.last_plan_metadata = {
             **self.last_plan_metadata,
+            **self._memory_plan_metadata(context),
             "planner_mode": "template",
             "llm_planner_adopted": False,
             "template_task_count": len(template_plan.tasks),
@@ -127,9 +134,14 @@ class TaskPlanner:
         """基于模板和规则生成任务计划"""
         intent_type = intent.get("intent", "general_chat")
         entities = dict(intent.get("entities", {}) or {})
+        memory_context = context.get("memory", {}) or {}
+        memory_preferences = memory_context.get("preferences", {}) or memory_context.get("user_preferences", {})
+        planning_profile = self._resolve_planning_profile(memory_context, memory_preferences)
+        entities["planning_profile"] = planning_profile
+        entities["current_preferences"] = entities.get("preferences", []) or []
         entities["preferences"] = self._merge_preferences(
-            entities.get("preferences", []) or [],
-            context.get("memory", {}).get("preferences", {}) or context.get("memory", {}).get("user_preferences", {}),
+            entities["current_preferences"],
+            planning_profile or memory_preferences,
         )
         missing_slots = intent.get("missing_slots", []) or []
         user_query = context.get("query", "")
@@ -152,6 +164,8 @@ class TaskPlanner:
                     "origin": entities.get("origin"),
                     "destination": entities.get("destination"),
                     "date": entities.get("departure_date"),
+                    "preferences": self._task_preferences(entities, "search_flights"),
+                    **self._memory_params(entities, "search_flights"),
                 },
                 reason="用户需要查询两个城市之间的航班信息。",
             )
@@ -166,7 +180,8 @@ class TaskPlanner:
                     "checkin_date": entities.get("departure_date"),
                     "checkout_date": entities.get("return_date"),
                     "budget": entities.get("budget"),
-                    "preferences": entities.get("preferences", []),
+                    "preferences": self._task_preferences(entities, "search_hotels"),
+                    **self._memory_params(entities, "search_hotels"),
                 },
                 reason="用户需要查询目的地酒店信息。",
             )
@@ -178,7 +193,8 @@ class TaskPlanner:
                 name="搜索景点",
                 params={
                     "location": entities.get("destination"),
-                    "keywords": entities.get("preferences", []),
+                    "keywords": self._task_preferences(entities, "search_attractions"),
+                    **self._memory_params(entities, "search_attractions"),
                 },
                 reason="用户需要查询目的地景点或玩法信息。",
             )
@@ -240,12 +256,17 @@ class TaskPlanner:
         if not isinstance(memory_preferences, dict):
             return []
 
+        if isinstance(memory_preferences.get("global_preferences"), list):
+            return self._dedupe(memory_preferences.get("global_preferences", []))
+
         preference_fields = [
             "travel_styles",
             "hotel_preferences",
             "transport_preferences",
             "attraction_preferences",
             "food_preferences",
+            "dietary_restrictions",
+            "excluded_preferences",
             "raw_preferences",
         ]
         flattened = []
@@ -261,6 +282,88 @@ class TaskPlanner:
         if budget_preference and budget_preference not in flattened:
             flattened.append(budget_preference)
         return flattened
+
+    def _resolve_planning_profile(self, memory_context: Dict, memory_preferences: Dict) -> Dict:
+        """Resolve planner-ready preference profile from memory context."""
+        profile = memory_context.get("planning_profile") if isinstance(memory_context, dict) else {}
+        if isinstance(profile, dict) and profile.get("global_preferences") is not None:
+            return profile
+        nested_profile = memory_preferences.get("planning_profile") if isinstance(memory_preferences, dict) else {}
+        if isinstance(nested_profile, dict) and nested_profile.get("global_preferences") is not None:
+            return nested_profile
+        if isinstance(memory_preferences, dict):
+            return self.preference_profile_builder.build(memory_preferences)
+        return {}
+
+    def _task_preferences(self, entities: Dict, tool_name: str) -> List[str]:
+        """Return preferences scoped for a specific task while keeping current input first."""
+        current_preferences = entities.get("current_preferences", []) or []
+        profile = entities.get("planning_profile", {}) or {}
+        tool_preferences = (profile.get("tool_preferences", {}) or {}).get(tool_name, [])
+        return self._merge_preferences(current_preferences, {"global_preferences": tool_preferences})
+
+    def _memory_params(self, entities: Dict, tool_name: str) -> Dict[str, Any]:
+        """Attach compact memory profile metadata to task params."""
+        profile = entities.get("planning_profile", {}) or {}
+        tool_preferences = (profile.get("tool_preferences", {}) or {}).get(tool_name, [])
+        if not profile or not tool_preferences:
+            return {}
+        return {
+            "memory_profile": {
+                "tool": tool_name,
+                "used_preferences": tool_preferences,
+                "budget_preference": profile.get("budget_preference"),
+                "excluded_preferences": profile.get("excluded_preferences", []),
+                "conflicts": profile.get("conflicts", []),
+                "used_preference_count": len(tool_preferences),
+            },
+            "memory_preference_source": "long_term_memory",
+        }
+
+    def _memory_plan_metadata(self, context: Dict) -> Dict[str, Any]:
+        """Build sanitized planner metadata for memory-personalized planning."""
+        memory_context = context.get("memory", {}) or {}
+        preferences = memory_context.get("preferences", {}) or memory_context.get("user_preferences", {})
+        profile = self._resolve_planning_profile(memory_context, preferences)
+        if not profile:
+            return {
+                "memory_preference_count": 0,
+                "memory_conflict_count": 0,
+                "memory_personalization_applied": False,
+            }
+        used_count = int(profile.get("used_preference_count") or len(profile.get("global_preferences") or []))
+        conflicts = profile.get("conflicts", []) or []
+        return {
+            "memory_preference_count": used_count,
+            "memory_conflict_count": len(conflicts),
+            "memory_personalization_applied": used_count > 0,
+            "memory_preference_fields": self._memory_preference_fields(profile),
+        }
+
+    def _memory_preference_fields(self, profile: Dict) -> List[str]:
+        """List populated preference fields without exposing raw messages."""
+        fields = []
+        for field in [
+            "travel_styles",
+            "hotel_preferences",
+            "transport_preferences",
+            "attraction_preferences",
+            "food_preferences",
+            "excluded_preferences",
+            "budget_preference",
+        ]:
+            value = profile.get(field)
+            if value not in (None, "", [], {}):
+                fields.append(field)
+        return fields
+
+    def _dedupe(self, values: List[Any]) -> List[str]:
+        """Keep order while removing duplicates."""
+        result = []
+        for value in values or []:
+            if value and value not in result:
+                result.append(value)
+        return result
 
     def _build_followup_plan(
         self,
@@ -295,7 +398,11 @@ class TaskPlanner:
         origin = entities.get("origin")
         duration = entities.get("duration") or 3
         budget = entities.get("budget")
-        preferences = entities.get("preferences", [])
+        flight_preferences = self._task_preferences(entities, "search_flights")
+        hotel_preferences = self._task_preferences(entities, "search_hotels")
+        attraction_preferences = self._task_preferences(entities, "search_attractions")
+        guide_preferences = self._task_preferences(entities, "retrieve_guide")
+        itinerary_preferences = self._task_preferences(entities, "generate_itinerary")
 
         if not destination:
             task = PlanningTask(
@@ -307,8 +414,9 @@ class TaskPlanner:
                     "origin": origin,
                     "duration": duration,
                     "budget": budget,
-                    "preferences": preferences,
+                    "preferences": self._task_preferences(entities, "recommend_destination"),
                     "query": user_query,
+                    **self._memory_params(entities, "recommend_destination"),
                 },
                 reason="用户没有明确目的地，需要先根据预算、时间和偏好推荐候选城市。",
             )
@@ -331,7 +439,8 @@ class TaskPlanner:
                     "destination": destination,
                     "date": entities.get("departure_date"),
                     "budget": budget,
-                    "preferences": preferences,
+                    "preferences": flight_preferences,
+                    **self._memory_params(entities, "search_flights"),
                 },
                 reason="完整旅行规划需要先获取出发地到目的地的交通方案。",
             ),
@@ -346,7 +455,8 @@ class TaskPlanner:
                     "checkin_date": entities.get("departure_date"),
                     "checkout_date": entities.get("return_date"),
                     "budget": budget,
-                    "preferences": preferences,
+                    "preferences": hotel_preferences,
+                    **self._memory_params(entities, "search_hotels"),
                 },
                 reason="完整旅行规划需要结合预算和偏好推荐住宿。",
             ),
@@ -358,8 +468,9 @@ class TaskPlanner:
                 tool="search_attractions",
                 params={
                     "location": destination,
-                    "keywords": preferences,
+                    "keywords": attraction_preferences,
                     "duration": duration,
+                    **self._memory_params(entities, "search_attractions"),
                 },
                 reason="完整旅行规划需要根据目的地和偏好筛选可游玩的景点。",
             ),
@@ -370,8 +481,9 @@ class TaskPlanner:
                 priority=4,
                 tool="retrieve_guide",
                 params={
-                    "query": self._build_guide_query(destination, duration, preferences),
+                    "query": self._build_guide_query(destination, duration, guide_preferences),
                     "destination": destination,
+                    **self._memory_params(entities, "retrieve_guide"),
                 },
                 reason="需要从攻略文档中获取目的地玩法、交通和注意事项。",
             ),
@@ -387,7 +499,8 @@ class TaskPlanner:
                     "duration": duration,
                     "budget": budget,
                     "travelers": entities.get("travelers"),
-                    "preferences": preferences,
+                    "preferences": itinerary_preferences,
+                    **self._memory_params(entities, "generate_itinerary"),
                 },
                 depends_on=[
                     "search_flights_1",
@@ -402,7 +515,7 @@ class TaskPlanner:
         # Replace the static itinerary task with a dependency-aware version.
         tasks = [task for task in tasks if task.task_id != "generate_itinerary_1"]
 
-        weather_aware = self._has_weather_constraint(user_query, preferences)
+        weather_aware = self._has_weather_constraint(user_query, itinerary_preferences)
         if weather_aware:
             weather_task = PlanningTask(
                 task_id="get_weather_forecast_1",
@@ -414,7 +527,8 @@ class TaskPlanner:
                     "city": destination,
                     "days": duration,
                     "departure_date": entities.get("departure_date"),
-                    "preferences": preferences,
+                    "preferences": itinerary_preferences,
+                    **self._memory_params(entities, "generate_itinerary"),
                 },
                 reason="用户提到天气、雨天或备选路线约束，完整行程生成前需要先获取目的地天气信息。",
             )
@@ -433,7 +547,7 @@ class TaskPlanner:
             PlanningTask(
                 task_id="generate_itinerary_1",
                 task_type="generate_itinerary",
-                name="鐢熸垚鏃呰琛岀▼",
+                name="生成旅行行程",
                 priority=itinerary_priority,
                 tool="generate_itinerary",
                 params={
@@ -442,11 +556,12 @@ class TaskPlanner:
                     "duration": duration,
                     "budget": budget,
                     "travelers": entities.get("travelers"),
-                    "preferences": preferences,
+                    "preferences": itinerary_preferences,
                     "weather_aware": weather_aware,
+                    **self._memory_params(entities, "generate_itinerary"),
                 },
                 depends_on=itinerary_dependencies,
-                reason="闇€瑕佺患鍚堣埅鐝€侀厭搴椼€佹櫙鐐广€佹敾鐣ュ拰鍋忓ソ鐢熸垚鏈€缁堣绋嬨€?",
+                reason="需要综合航班、酒店、景点、攻略、天气和偏好生成最终行程。",
             )
         )
         return TaskPlan(
@@ -590,7 +705,10 @@ class TaskPlanner:
         """Detect product-level complexity signals without exposing planner modes to users."""
         query = context.get("query", "") or ""
         entities = intent.get("entities", {}) or {}
-        preferences = entities.get("preferences", []) or []
+        memory_context = context.get("memory", {}) or {}
+        memory_preferences = memory_context.get("preferences", {}) or memory_context.get("user_preferences", {})
+        planning_profile = self._resolve_planning_profile(memory_context, memory_preferences)
+        preferences = self._merge_preferences(entities.get("preferences", []) or [], planning_profile or memory_preferences)
         confidence = intent.get("confidence", 1.0)
         keyword_groups = {
             "multi_objective": ["同时", "兼顾", "既要", "又要", "平衡", "权衡"],
@@ -605,6 +723,8 @@ class TaskPlanner:
             signals.append("long_query")
         if len(preferences) >= 3:
             signals.append("multiple_preferences")
+        if planning_profile.get("used_preference_count", 0) >= 2:
+            signals.append("memory_personalization")
         if entities.get("budget"):
             signals.append("budget_entity")
         if entities.get("travelers"):
@@ -665,6 +785,7 @@ class TaskPlanner:
                     content=(
                         "请基于下面的意图和上下文生成任务计划JSON。\n"
                         f"用户输入：{context.get('query', '')}\n"
+                        f"长期记忆画像：{json.dumps(self._memory_plan_metadata(context), ensure_ascii=False)}\n"
                         f"结构化意图：{json.dumps(intent, ensure_ascii=False)}\n"
                         f"模板规划参考：{template_plan.model_dump_json() }"
                     ),
@@ -718,6 +839,44 @@ class TaskPlanner:
             "fallback_reason": None,
         }
         return plan
+
+    def _apply_memory_personalization(self, plan: TaskPlan, context: Dict) -> TaskPlan:
+        """Ensure any adopted LLM plan still carries deterministic memory constraints."""
+        memory_context = context.get("memory", {}) or {}
+        preferences = memory_context.get("preferences", {}) or memory_context.get("user_preferences", {})
+        profile = self._resolve_planning_profile(memory_context, preferences)
+        if not profile or not profile.get("used_preference_count"):
+            return plan
+
+        personalized_tasks = []
+        for task in plan.tasks:
+            params = dict(task.params or {})
+            tool_name = task.tool or task.task_type
+            if tool_name not in {
+                "search_flights",
+                "search_hotels",
+                "search_attractions",
+                "retrieve_guide",
+                "generate_itinerary",
+                "recommend_destination",
+            }:
+                personalized_tasks.append(task)
+                continue
+
+            current_preferences = params.get("preferences") or params.get("keywords") or []
+            entities = {
+                "current_preferences": current_preferences if isinstance(current_preferences, list) else [current_preferences],
+                "planning_profile": profile,
+            }
+            scoped_preferences = self._task_preferences(entities, tool_name)
+            if task.tool == "search_attractions":
+                params["keywords"] = scoped_preferences
+            else:
+                params["preferences"] = scoped_preferences
+            params.update(self._memory_params(entities, tool_name))
+            personalized_tasks.append(task.model_copy(update={"params": params}))
+
+        return plan.model_copy(update={"tasks": personalized_tasks})
 
     def _validate_llm_plan(self, plan: TaskPlan) -> bool:
         """校验LLM规划结果是否安全可执行"""

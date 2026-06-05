@@ -139,6 +139,31 @@ async def test_itinerary_tool_generates_itinerary():
 
 
 @pytest.mark.asyncio
+async def test_itinerary_tool_applies_memory_profile_constraints():
+    """行程工具会消费长期记忆画像并输出个性化摘要。"""
+    tool = ItineraryTool()
+
+    result = await tool.execute(
+        destination="杭州",
+        duration=2,
+        preferences=["慢节奏", "少走路", "地铁附近"],
+        memory_profile={
+            "used_preferences": ["慢节奏", "少走路", "地铁附近", "不吃辣"],
+            "budget_preference": "经济型",
+            "excluded_preferences": ["不吃辣"],
+            "conflicts": [],
+        },
+    )
+
+    assert result["success"] is True
+    data = result["data"]
+    assert data["personalization_summary"]["memory_applied"] is True
+    assert "少走路" in data["personalization_summary"]["used_preferences"]
+    assert "控制步行距离" in data["itinerary"][0]["notes"]
+    assert "不吃辣" in data["itinerary"][0]["notes"]
+
+
+@pytest.mark.asyncio
 async def test_registry_executes_new_tools():
     """工具注册表可以执行新增工具"""
     registry = ToolRegistry()

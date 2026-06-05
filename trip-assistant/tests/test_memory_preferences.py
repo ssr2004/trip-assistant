@@ -23,12 +23,15 @@ def test_preference_extractor_extracts_travel_preferences():
     """偏好抽取器可以从自然语言中抽取旅行偏好"""
     extractor = PreferenceExtractor()
 
-    preference = extractor.extract("我喜欢慢节奏，不想太赶，酒店最好靠近地铁，喜欢自然风光和当地美食")
+    preference = extractor.extract("我喜欢慢节奏，不想太赶，酒店最好靠近地铁，喜欢自然风光和当地美食，不吃辣")
 
     assert "慢节奏" in preference.travel_styles
     assert "地铁附近" in preference.hotel_preferences
     assert "自然风光" in preference.attraction_preferences
     assert "当地美食" in preference.food_preferences
+    assert "不吃辣" in preference.dietary_restrictions
+    assert preference.preference_evidence["travel_styles"] == ["慢节奏"]
+    assert preference.preference_evidence["hotel_preferences"] == ["地铁附近"]
     assert "慢节奏" in preference.raw_preferences
     assert preference.updated_at is not None
 
@@ -55,6 +58,8 @@ def test_long_term_memory_merges_and_deduplicates_preferences(memory_paths):
     assert preferences["travel_styles"] == ["慢节奏", "亲子"]
     assert preferences["hotel_preferences"] == ["地铁附近"]
     assert preferences["budget_preference"] == "经济型"
+    assert preferences["planning_profile"]["used_preference_count"] >= 4
+    assert "search_hotels" in preferences["planning_profile"]["tool_preferences"]
 
 
 def test_long_term_memory_ignores_empty_preferences(memory_paths):
@@ -81,6 +86,34 @@ def test_memory_manager_extracts_saves_and_retrieves_preferences(memory_paths):
     assert "地铁附近" in context["preferences"]["hotel_preferences"]
     assert context["preferences"]["budget_preference"] == "经济型"
     assert context["user_preferences"] == context["preferences"]
+    assert context["planning_profile"]["budget_preference"] == "经济型"
+    assert "search_hotels" in context["planning_profile"]["tool_preferences"]
+
+
+def test_memory_profile_detects_conflicts_and_tool_scopes(memory_paths):
+    """长期记忆画像能识别冲突并按工具分流偏好"""
+    memory = LongTermMemory(memory_paths["long_term"])
+
+    preferences = memory.update_preferences(
+        {
+            "travel_styles": ["慢节奏", "少走路"],
+            "hotel_preferences": ["地铁附近", "高星级酒店"],
+            "transport_preferences": ["高铁优先"],
+            "attraction_preferences": ["自然风光"],
+            "food_preferences": ["当地美食"],
+            "budget_preference": "经济型",
+            "excluded_preferences": ["不吃辣"],
+        },
+        "user-profile",
+    )
+
+    profile = preferences["planning_profile"]
+    assert profile["budget_preference"] == "经济型"
+    assert "经济型预算与高星级酒店偏好可能冲突" in profile["conflicts"]
+    assert "地铁附近" in profile["tool_preferences"]["search_hotels"]
+    assert "高铁优先" in profile["tool_preferences"]["search_flights"]
+    assert "自然风光" in profile["tool_preferences"]["search_attractions"]
+    assert "不吃辣" in profile["excluded_preferences"]
 
 
 def test_planner_merges_memory_preferences_into_task_params():
@@ -119,6 +152,53 @@ def test_planner_merges_memory_preferences_into_task_params():
     hotel_task = next(task for task in tasks if task["task_id"] == "search_hotels_1")
     assert itinerary_task["params"]["preferences"] == ["自然风光", "慢节奏", "地铁附近"]
     assert hotel_task["params"]["preferences"] == ["自然风光", "慢节奏", "地铁附近"]
+    assert itinerary_task["params"]["memory_preference_source"] == "long_term_memory"
+    assert itinerary_task["params"]["memory_profile"]["used_preference_count"] >= 2
+    assert planner.last_plan_metadata["memory_personalization_applied"] is True
+
+
+def test_planner_scopes_memory_preferences_by_tool():
+    """Planner会把长期偏好按工具语义分流，而不是所有工具共享同一份偏好"""
+    planner = TaskPlanner()
+    intent = {
+        "intent": "travel_plan",
+        "entities": {
+            "origin": "郑州",
+            "destination": "杭州",
+            "departure_date": "2026-06-10",
+            "duration": 3,
+            "budget": 3000,
+            "preferences": [],
+        },
+        "missing_slots": [],
+        "confidence": 0.9,
+    }
+    context = {
+        "query": "我要从郑州去杭州玩三天",
+        "memory": {
+            "preferences": {
+                "travel_styles": ["慢节奏"],
+                "hotel_preferences": ["地铁附近"],
+                "transport_preferences": ["高铁优先"],
+                "attraction_preferences": ["自然风光"],
+                "food_preferences": ["当地美食"],
+                "budget_preference": "经济型",
+            }
+        },
+    }
+
+    tasks = planner.plan(intent, context)
+
+    flight_task = next(task for task in tasks if task["task_id"] == "search_flights_1")
+    hotel_task = next(task for task in tasks if task["task_id"] == "search_hotels_1")
+    attraction_task = next(task for task in tasks if task["task_id"] == "search_attractions_1")
+    itinerary_task = next(task for task in tasks if task["task_id"] == "generate_itinerary_1")
+    assert "高铁优先" in flight_task["params"]["preferences"]
+    assert "地铁附近" not in flight_task["params"]["preferences"]
+    assert "地铁附近" in hotel_task["params"]["preferences"]
+    assert "高铁优先" not in hotel_task["params"]["preferences"]
+    assert "自然风光" in attraction_task["params"]["keywords"]
+    assert "当地美食" in itinerary_task["params"]["preferences"]
 
 
 @pytest.mark.asyncio

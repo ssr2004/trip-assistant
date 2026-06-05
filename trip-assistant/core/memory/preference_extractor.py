@@ -16,6 +16,7 @@ class PreferenceExtractor:
         "深度游": ["深度游", "深度体验", "深度旅行"],
         "亲子": ["亲子", "带孩子", "带娃", "小朋友"],
         "情侣": ["情侣", "约会", "浪漫"],
+        "少走路": ["少走路", "不想走太多", "别走太多", "老人", "腿脚不方便"],
     }
 
     HOTEL_PATTERNS: Dict[str, List[str]] = {
@@ -46,6 +47,14 @@ class PreferenceExtractor:
         "当地美食": ["当地美食", "特色美食", "本地美食", "当地菜", "特色菜"],
         "清淡": ["清淡", "少辣", "不吃辣"],
         "素食": ["素食", "吃素", "素菜"],
+        "海鲜": ["海鲜", "吃海鲜"],
+    }
+
+    EXCLUDED_PATTERNS: Dict[str, List[str]] = {
+        "不吃辣": ["不吃辣", "不能吃辣", "不要辣"],
+        "不喝酒": ["不喝酒", "不要酒吧", "不去酒吧"],
+        "排除购物": ["不购物", "不要购物", "不想购物"],
+        "排除夜生活": ["不要夜生活", "不去夜店", "不去酒吧"],
     }
 
     BUDGET_PATTERNS: Dict[str, List[str]] = {
@@ -66,12 +75,23 @@ class PreferenceExtractor:
         preference.attraction_preferences = self._match_patterns(text, self.ATTRACTION_PATTERNS)
         preference.food_preferences = self._match_patterns(text, self.FOOD_PATTERNS)
         preference.budget_preference = self._match_budget(text)
+        preference.dietary_restrictions = self._match_patterns(text, self.EXCLUDED_PATTERNS)
+        preference.excluded_preferences = list(preference.dietary_restrictions)
+        preference.preference_evidence = self._build_evidence(text, {
+            "travel_styles": self.TRAVEL_STYLE_PATTERNS,
+            "hotel_preferences": self.HOTEL_PATTERNS,
+            "transport_preferences": self.TRANSPORT_PATTERNS,
+            "attraction_preferences": self.ATTRACTION_PATTERNS,
+            "food_preferences": self.FOOD_PATTERNS,
+            "dietary_restrictions": self.EXCLUDED_PATTERNS,
+        })
         preference.raw_preferences = self._dedupe(
             preference.travel_styles
             + preference.hotel_preferences
             + preference.transport_preferences
             + preference.attraction_preferences
             + preference.food_preferences
+            + preference.dietary_restrictions
             + ([preference.budget_preference] if preference.budget_preference else [])
         )
 
@@ -93,6 +113,18 @@ class PreferenceExtractor:
             if any(keyword in text for keyword in keywords):
                 return label
         return None
+
+    def _build_evidence(self, text: str, pattern_groups: Dict[str, Dict[str, List[str]]]) -> Dict[str, List[str]]:
+        """构建偏好证据，记录每个字段命中的标签。"""
+        evidence: Dict[str, List[str]] = {}
+        for field, patterns in pattern_groups.items():
+            matched = self._match_patterns(text, patterns)
+            if matched:
+                evidence[field] = matched
+        budget = self._match_budget(text)
+        if budget:
+            evidence["budget_preference"] = [budget]
+        return evidence
 
     def _dedupe(self, values: List[str]) -> List[str]:
         """保持顺序去重"""

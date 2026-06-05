@@ -30,6 +30,9 @@ class TraceStep(BaseModel):
     fallback_used: bool | None = None
     recovery_strategy: str | None = None
     degradation_reason: str | None = None
+    memory_preference_source: str | None = None
+    memory_used_preferences: list[str] | None = None
+    memory_preference_count: int | None = None
 
 
 class ExecutionTrace(BaseModel):

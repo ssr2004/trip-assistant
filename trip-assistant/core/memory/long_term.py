@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import json
 import os
 
+from core.memory.preference_profile import PreferenceProfileBuilder
 from models.memory import UserPreference
 
 
@@ -19,6 +20,10 @@ class LongTermMemory:
         "attraction_preferences": [],
         "food_preferences": [],
         "budget_preference": None,
+        "dietary_restrictions": [],
+        "excluded_preferences": [],
+        "preference_evidence": {},
+        "planning_profile": {},
         "raw_preferences": [],
         "updated_at": None,
         # 兼容早期记忆字段
@@ -38,6 +43,7 @@ class LongTermMemory:
         "food_preferences",
         "raw_preferences",
         "dietary_restrictions",
+        "excluded_preferences",
     }
 
     def __init__(self, storage_path: str = "data/long_term_memory.json"):
@@ -49,6 +55,7 @@ class LongTermMemory:
         """
         self.storage_path = storage_path
         self.preferences: Dict[str, Dict] = {}
+        self.profile_builder = PreferenceProfileBuilder()
         self._load()
 
     def _load(self):
@@ -96,9 +103,12 @@ class LongTermMemory:
                 continue
             if key in self.LIST_FIELDS:
                 merged[key] = self._merge_list(merged.get(key, []), value if isinstance(value, list) else [value])
+            elif key == "preference_evidence" and isinstance(value, dict):
+                merged[key] = self._merge_evidence(merged.get(key, {}), value)
             else:
                 merged[key] = value
 
+        merged["planning_profile"] = self.profile_builder.build(merged)
         self.preferences[session_id] = merged
         self._save()
         return self.get_preferences(session_id)
@@ -133,11 +143,14 @@ class LongTermMemory:
         for field in self.LIST_FIELDS:
             value = result.get(field)
             result[field] = value if isinstance(value, list) else []
+        if not isinstance(result.get("preference_evidence"), dict):
+            result["preference_evidence"] = {}
+        result["planning_profile"] = self.profile_builder.build(result)
         return result
 
     def _has_meaningful_preferences(self, preferences: Dict) -> bool:
         """判断偏好更新是否包含有效内容"""
-        ignored_fields = {"updated_at"}
+        ignored_fields = {"updated_at", "planning_profile"}
         for key, value in preferences.items():
             if key in ignored_fields:
                 continue
@@ -151,4 +164,13 @@ class LongTermMemory:
         for value in new_values or []:
             if value and value not in merged:
                 merged.append(value)
+        return merged
+
+    def _merge_evidence(self, old_evidence: Dict[str, List[str]], new_evidence: Dict[str, List[str]]) -> Dict[str, List[str]]:
+        """合并偏好证据字段。"""
+        merged = dict(old_evidence or {})
+        for field, values in (new_evidence or {}).items():
+            current = merged.get(field, [])
+            incoming = values if isinstance(values, list) else [values]
+            merged[field] = self._merge_list(current, incoming)
         return merged

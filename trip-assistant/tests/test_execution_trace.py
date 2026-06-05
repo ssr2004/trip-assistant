@@ -302,3 +302,51 @@ def test_execution_trace_includes_llm_planner_metadata():
     assert trace["summary"]["llm_planner_adopted"] is True
     assert trace["summary"]["llm_planner_duration_ms"] == 123
     assert trace["summary"]["llm_planner_total_tokens"] == 456
+
+
+def test_execution_trace_includes_memory_personalization_metadata():
+    agent = TravelAgent()
+    task = {
+        "task_id": "generate_itinerary_1",
+        "task_type": "generate_itinerary",
+        "tool": "generate_itinerary",
+        "name": "生成旅行行程",
+        "params": {
+            "memory_preference_source": "long_term_memory",
+            "memory_profile": {
+                "used_preferences": ["慢节奏", "地铁附近", "不吃辣"],
+                "used_preference_count": 3,
+            },
+        },
+    }
+    task_result = {
+        "task": task,
+        "success": True,
+        "result": {"success": True, "data": {"itinerary": [{"day": 1}], "sources": []}},
+        "error": None,
+        "meta": {"duration_ms": 12, "execution_mode": "template", "result_summary": "itinerary_days=1"},
+    }
+
+    trace = agent._build_execution_trace({
+        "intent": {"intent": "travel_plan", "metadata": {"source": "rule"}},
+        "tasks": [task],
+        "task_results": [task_result],
+        "rag_context": [],
+        "planner_metadata": {
+            "planner_mode": "template",
+            "memory_personalization_applied": True,
+            "memory_preference_count": 3,
+            "memory_conflict_count": 0,
+            "memory_preference_fields": ["travel_styles", "hotel_preferences", "excluded_preferences"],
+        },
+    })
+
+    planning_step = next(step for step in trace["steps"] if step["stage"] == "planning")
+    tool_step = next(step for step in trace["steps"] if step.get("tool") == "generate_itinerary")
+    assert "memory=3" in planning_step["detail"]
+    assert tool_step["memory_preference_source"] == "long_term_memory"
+    assert tool_step["memory_preference_count"] == 3
+    assert tool_step["memory_used_preferences"] == ["慢节奏", "地铁附近", "不吃辣"]
+    assert trace["summary"]["memory_personalization_applied"] is True
+    assert trace["summary"]["memory_preference_count"] == 3
+    assert trace["summary"]["memory_preference_fields"] == ["travel_styles", "hotel_preferences", "excluded_preferences"]

@@ -42,6 +42,7 @@ class ItineraryTool(BaseTool):
         budget: float = None,
         travelers: int = None,
         preferences: List[str] = None,
+        memory_profile: Dict = None,
         context: Dict = None,
         **kwargs,
     ) -> Dict:
@@ -55,6 +56,7 @@ class ItineraryTool(BaseTool):
             budget: 预算
             travelers: 出行人数
             preferences: 用户偏好
+            memory_profile: 长期记忆注入的规划画像
             context: 前置任务注入的航班、酒店、景点和攻略结果
 
         Returns:
@@ -63,8 +65,10 @@ class ItineraryTool(BaseTool):
         destination = destination or "目的地"
         duration = duration or 3
         preferences = preferences or []
+        memory_profile = memory_profile or {}
         context = context or {}
         context_summary = self._build_context_summary(context)
+        personalization_summary = self._build_personalization_summary(memory_profile, preferences)
         budget_summary = self._build_budget_summary(duration, budget, travelers)
 
         llm_plan = None
@@ -76,6 +80,7 @@ class ItineraryTool(BaseTool):
                 budget=budget,
                 travelers=travelers,
                 preferences=preferences,
+                memory_profile=memory_profile,
                 context=context,
             )
 
@@ -96,9 +101,10 @@ class ItineraryTool(BaseTool):
                 generation_mode="llm",
                 metadata_source="llm_itinerary_generator",
                 context_summary=context_summary,
+                personalization_summary=personalization_summary,
             )
 
-        itinerary = self._build_itinerary(destination, duration, preferences)
+        itinerary = self._build_itinerary(destination, duration, preferences, memory_profile)
         return self._build_result(
             origin=origin,
             destination=destination,
@@ -112,6 +118,7 @@ class ItineraryTool(BaseTool):
             generation_mode="template",
             metadata_source="template_itinerary_generator",
             context_summary=context_summary,
+            personalization_summary=personalization_summary,
         )
 
     def _should_use_llm(self) -> bool:
@@ -126,10 +133,12 @@ class ItineraryTool(BaseTool):
         budget: float,
         travelers: int,
         preferences: List[str],
+        memory_profile: Dict,
         context: Dict = None,
     ) -> Optional[LLMItineraryPlan]:
         """调用LLM生成行程，失败时返回None"""
         context_text = self._build_llm_context_text(context or {})
+        memory_text = self._build_llm_memory_text(memory_profile or {})
         request = LLMRequest(
             messages=[
                 LLMMessage(role="system", content=ITINERARY_GENERATION_SYSTEM_PROMPT),
@@ -143,6 +152,7 @@ class ItineraryTool(BaseTool):
                         f"预算：{budget if budget is not None else '未知'}\n"
                         f"出行人数：{travelers if travelers is not None else '未知'}\n"
                         f"用户偏好：{', '.join(preferences) if preferences else '无'}\n"
+                        f"长期记忆约束：{memory_text}\n"
                         f"可参考的前置工具结果：{context_text}\n"
                         "如果前置工具结果中包含航班、酒店、景点或攻略，请优先参考这些结果生成安排。\n"
                         "只返回JSON，字段必须包含 itinerary、summary、budget_tips。\n"
@@ -186,6 +196,7 @@ class ItineraryTool(BaseTool):
         generation_mode: str,
         metadata_source: str,
         context_summary: Dict,
+        personalization_summary: Dict,
     ) -> Dict:
         """构建标准化行程工具结果"""
         return self.success_result(
@@ -201,6 +212,7 @@ class ItineraryTool(BaseTool):
                 "summary": summary,
                 "generation_mode": generation_mode,
                 "context_summary": context_summary,
+                "personalization_summary": personalization_summary,
             },
             metadata={"source": metadata_source},
         )
@@ -248,8 +260,37 @@ class ItineraryTool(BaseTool):
             return "无"
         return json.dumps(compact_context, ensure_ascii=False)
 
-    def _build_itinerary(self, destination: str, duration: int, preferences: List[str]) -> List[Dict]:
+    def _build_personalization_summary(self, memory_profile: Dict, preferences: List[str]) -> Dict:
+        """构建长期记忆个性化摘要。"""
+        used_preferences = memory_profile.get("used_preferences") if isinstance(memory_profile, dict) else []
+        if not isinstance(used_preferences, list):
+            used_preferences = []
+        return {
+            "memory_applied": bool(used_preferences),
+            "used_preferences": used_preferences,
+            "fallback_preferences": preferences or [],
+            "budget_preference": memory_profile.get("budget_preference") if isinstance(memory_profile, dict) else None,
+            "excluded_preferences": memory_profile.get("excluded_preferences", []) if isinstance(memory_profile, dict) else [],
+            "conflicts": memory_profile.get("conflicts", []) if isinstance(memory_profile, dict) else [],
+        }
+
+    def _build_llm_memory_text(self, memory_profile: Dict) -> str:
+        """构建传给LLM的长期记忆约束文本。"""
+        if not memory_profile:
+            return "无"
+        compact = {
+            "used_preferences": memory_profile.get("used_preferences", []),
+            "budget_preference": memory_profile.get("budget_preference"),
+            "excluded_preferences": memory_profile.get("excluded_preferences", []),
+            "conflicts": memory_profile.get("conflicts", []),
+        }
+        if not any(compact.values()):
+            return "无"
+        return json.dumps(compact, ensure_ascii=False)
+
+    def _build_itinerary(self, destination: str, duration: int, preferences: List[str], memory_profile: Dict = None) -> List[Dict]:
         """构建每日行程"""
+        memory_profile = memory_profile or {}
         if destination == "杭州":
             base_days = [
                 {
@@ -296,6 +337,14 @@ class ItineraryTool(BaseTool):
         if "慢节奏" in preferences:
             for day in base_days:
                 day["notes"] += " 已根据慢节奏偏好减少高强度安排。"
+        if "少走路" in preferences:
+            for day in base_days:
+                day["notes"] += " 已根据少走路偏好控制步行距离。"
+        excluded_preferences = memory_profile.get("excluded_preferences", []) if isinstance(memory_profile, dict) else []
+        if excluded_preferences:
+            excluded_text = "、".join(excluded_preferences[:3])
+            for day in base_days:
+                day["notes"] += f" 已避开{excluded_text}等排除项。"
 
         if duration <= len(base_days):
             return base_days[:duration]
