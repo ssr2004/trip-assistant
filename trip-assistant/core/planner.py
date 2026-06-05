@@ -7,7 +7,8 @@ import json
 
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.llm.json_repair import parse_llm_json_object
-from core.llm.prompts import PLANNER_FALLBACK_SYSTEM_PROMPT
+from core.llm.prompts import PLANNER_FALLBACK_SYSTEM_PROMPT, get_prompt_metadata
+from core.llm.quality import audit_task_plan_quality
 from core.memory.preference_profile import PreferenceProfileBuilder
 from models.task import PlanningTask, TaskPlan
 
@@ -792,13 +793,15 @@ class TaskPlanner:
                 ),
             ],
             response_format="json_object",
-            metadata={"fallback_for": "task_plan"},
+            metadata={**get_prompt_metadata("planner_fallback"), "fallback_for": "task_plan"},
         )
         response = await self.llm_client.chat(request)
         self.last_plan_metadata = {
             **self.last_plan_metadata,
             "llm_planner_model": response.metadata.get("model"),
             "llm_planner_error_type": response.metadata.get("error_type"),
+            "llm_planner_prompt_id": response.metadata.get("prompt_id"),
+            "llm_planner_prompt_version": response.metadata.get("prompt_version"),
             "llm_planner_duration_ms": int(response.metadata.get("duration_ms") or 0),
             "llm_planner_prompt_tokens": int(response.metadata.get("prompt_tokens") or 0),
             "llm_planner_completion_tokens": int(response.metadata.get("completion_tokens") or 0),
@@ -832,11 +835,23 @@ class TaskPlanner:
             self.last_plan_metadata = {
                 **self.last_plan_metadata,
                 "fallback_reason": "unsafe_plan",
+                "llm_output_quality_passed": False,
+                "llm_output_quality_issues": ["unsafe_plan"],
+                "llm_output_quality_issue_count": 1,
+            }
+            return None
+        quality_result = audit_task_plan_quality(plan)
+        if not quality_result.passed:
+            self.last_plan_metadata = {
+                **self.last_plan_metadata,
+                "fallback_reason": "quality_gate_failed",
+                **quality_result.metadata(),
             }
             return None
         self.last_plan_metadata = {
             **self.last_plan_metadata,
             "fallback_reason": None,
+            **quality_result.metadata(),
         }
         return plan
 

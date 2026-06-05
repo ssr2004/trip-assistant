@@ -7,7 +7,8 @@ from typing import Dict, List, Optional
 
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.llm.json_repair import parse_llm_json_object
-from core.llm.prompts import ITINERARY_GENERATION_SYSTEM_PROMPT
+from core.llm.prompts import ITINERARY_GENERATION_SYSTEM_PROMPT, get_prompt_metadata
+from core.llm.quality import audit_itinerary_quality
 from models.itinerary import LLMItineraryPlan
 from tools.registry import BaseTool
 
@@ -25,6 +26,7 @@ class ItineraryTool(BaseTool):
         """
         self.llm_client = llm_client or LLMClient()
         self.llm_enabled = llm_enabled
+        self.last_llm_metadata: Dict = {}
 
     @property
     def name(self) -> str:
@@ -72,6 +74,7 @@ class ItineraryTool(BaseTool):
         budget_summary = self._build_budget_summary(duration, budget, travelers)
 
         llm_plan = None
+        self.last_llm_metadata = {}
         if self._should_use_llm():
             llm_plan = await self._llm_generate(
                 origin=origin,
@@ -102,6 +105,7 @@ class ItineraryTool(BaseTool):
                 metadata_source="llm_itinerary_generator",
                 context_summary=context_summary,
                 personalization_summary=personalization_summary,
+                metadata_extra=self.last_llm_metadata,
             )
 
         itinerary = self._build_itinerary(destination, duration, preferences, memory_profile)
@@ -119,6 +123,7 @@ class ItineraryTool(BaseTool):
             metadata_source="template_itinerary_generator",
             context_summary=context_summary,
             personalization_summary=personalization_summary,
+            metadata_extra=self.last_llm_metadata,
         )
 
     def _should_use_llm(self) -> bool:
@@ -161,25 +166,41 @@ class ItineraryTool(BaseTool):
                 ),
             ],
             response_format="json_object",
-            metadata={"fallback_for": "itinerary_generation"},
+            metadata={**get_prompt_metadata("itinerary_generation"), "fallback_for": "itinerary_generation"},
         )
         response = await self.llm_client.chat(request)
+        self.last_llm_metadata = {
+            "llm_attempted": True,
+            "llm_model": response.metadata.get("model"),
+            "prompt_id": response.metadata.get("prompt_id"),
+            "prompt_version": response.metadata.get("prompt_version"),
+            "llm_error_type": response.metadata.get("error_type"),
+            "llm_duration_ms": int(response.metadata.get("duration_ms") or 0),
+            "llm_prompt_tokens": int(response.metadata.get("prompt_tokens") or 0),
+            "llm_completion_tokens": int(response.metadata.get("completion_tokens") or 0),
+            "llm_total_tokens": int(response.metadata.get("total_tokens") or 0),
+        }
         if not response.success:
+            self.last_llm_metadata["fallback_reason"] = "llm_call_failed"
             return None
 
         parsed_json = parse_llm_json_object(response.content)
         if not parsed_json:
+            self.last_llm_metadata["fallback_reason"] = "json_parse_failed"
             return None
 
         try:
             plan = LLMItineraryPlan.model_validate(parsed_json)
         except Exception:
+            self.last_llm_metadata["fallback_reason"] = "schema_validation_failed"
             return None
 
-        if len(plan.itinerary) != duration:
+        quality_result = audit_itinerary_quality(plan, duration)
+        self.last_llm_metadata.update(quality_result.metadata())
+        if not quality_result.passed:
+            self.last_llm_metadata["fallback_reason"] = "quality_gate_failed"
             return None
-        if any(day.day != index for index, day in enumerate(plan.itinerary, start=1)):
-            return None
+        self.last_llm_metadata["fallback_reason"] = None
         return plan
 
     def _build_result(
@@ -197,6 +218,7 @@ class ItineraryTool(BaseTool):
         metadata_source: str,
         context_summary: Dict,
         personalization_summary: Dict,
+        metadata_extra: Dict = None,
     ) -> Dict:
         """构建标准化行程工具结果"""
         return self.success_result(
@@ -214,7 +236,7 @@ class ItineraryTool(BaseTool):
                 "context_summary": context_summary,
                 "personalization_summary": personalization_summary,
             },
-            metadata={"source": metadata_source},
+            metadata={"source": metadata_source, **(metadata_extra or {})},
         )
 
     def _build_context_summary(self, context: Dict) -> Dict:

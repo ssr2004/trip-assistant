@@ -10,6 +10,8 @@ from core.llm.prompts import (
     PLANNER_FALLBACK_SYSTEM_PROMPT,
     ITINERARY_GENERATION_SYSTEM_PROMPT,
     RESPONSE_POLISH_SYSTEM_PROMPT,
+    PROMPT_REGISTRY,
+    get_prompt_metadata,
 )
 
 
@@ -148,6 +150,7 @@ async def test_llm_client_chat_with_mock_openai_client():
             LLMMessage(role="user", content="帮我规划杭州三天游"),
         ],
         response_format="json_object",
+        metadata={**get_prompt_metadata("planner_fallback"), "fallback_for": "task_plan", "raw_user_input": "不应透传"},
     )
     response = await client.chat(request)
 
@@ -156,6 +159,10 @@ async def test_llm_client_chat_with_mock_openai_client():
     assert response.content == "这是LLM返回内容"
     assert response.metadata["model"] == "deepseek-chat"
     assert response.metadata["response_format"] == "json_object"
+    assert response.metadata["prompt_id"] == "planner_fallback"
+    assert response.metadata["prompt_version"] == PROMPT_REGISTRY["planner_fallback"].version
+    assert response.metadata["fallback_for"] == "task_plan"
+    assert "raw_user_input" not in response.metadata
     assert response.metadata["execution_mode"] == "llm"
     assert isinstance(response.metadata["duration_ms"], int)
     assert response.metadata["duration_ms"] >= 0
@@ -220,3 +227,12 @@ def test_prompt_templates_are_ready_for_future_fallbacks():
     assert "任务规划" in PLANNER_FALLBACK_SYSTEM_PROMPT
     assert "旅行规划师" in ITINERARY_GENERATION_SYSTEM_PROMPT
     assert "最终回复" in RESPONSE_POLISH_SYSTEM_PROMPT
+
+
+def test_prompt_registry_exposes_stable_versions():
+    """Prompt注册表提供稳定版本元数据。"""
+    for prompt_id in ["intent_fallback", "planner_fallback", "itinerary_generation", "json_repair"]:
+        metadata = get_prompt_metadata(prompt_id)
+        assert metadata["prompt_id"] == prompt_id
+        assert metadata["prompt_version"]
+        assert metadata["prompt_purpose"]

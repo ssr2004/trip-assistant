@@ -6,6 +6,7 @@ import json
 from typing import Any, Callable, Dict, Optional
 
 from core.llm.schemas import LLMMessage, LLMRequest
+from core.llm.prompts import JSON_REPAIR_SYSTEM_PROMPT, get_prompt_metadata
 
 
 JSON_PARSE_FAILED = "json_parse_failed"
@@ -79,10 +80,7 @@ async def parse_or_repair_json_object(
             messages=[
                 LLMMessage(
                     role="system",
-                    content=(
-                        "You repair malformed or schema-invalid JSON from another LLM call. "
-                        "Return only one valid JSON object. Do not include Markdown fences."
-                    ),
+                    content=JSON_REPAIR_SYSTEM_PROMPT,
                 ),
                 LLMMessage(
                     role="user",
@@ -96,6 +94,7 @@ async def parse_or_repair_json_object(
             response_format="json_object",
             metadata={
                 **(metadata or {}),
+                **get_prompt_metadata("json_repair"),
                 "repair_for": "structured_json",
                 "repair_failure_type": failure_type,
             },

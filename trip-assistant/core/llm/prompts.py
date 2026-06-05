@@ -1,7 +1,31 @@
-"""
-LLM Prompt模板
-集中管理后续意图识别、任务规划、行程生成和回复润色所需的系统提示词
-"""
+"""LLM Prompt模板与版本元数据。"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict
+
+
+PROMPT_VERSION = "2026-06-05.v1"
+
+
+@dataclass(frozen=True)
+class PromptSpec:
+    """Prompt registry entry."""
+
+    prompt_id: str
+    name: str
+    version: str
+    purpose: str
+    text: str
+
+    def metadata(self) -> Dict[str, str]:
+        """Return sanitized prompt metadata for LLM request/trace records."""
+        return {
+            "prompt_id": self.prompt_id,
+            "prompt_name": self.name,
+            "prompt_version": self.version,
+            "prompt_purpose": self.purpose,
+        }
 
 INTENT_FALLBACK_SYSTEM_PROMPT = """
 你是 TravelMind 旅行AI助手的意图识别模块。请根据用户输入识别旅行意图，抽取出发地、目的地、日期、天数、预算、人数和偏好等信息。
@@ -157,3 +181,53 @@ RESPONSE_POLISH_SYSTEM_PROMPT = """
 你是旅行AI助手的最终回复生成模块。请把工具结果整理成自然、清晰、结构化的中文旅行方案。
 不要编造没有依据的实时价格、库存或政策信息。
 """.strip()
+
+JSON_REPAIR_SYSTEM_PROMPT = (
+    "You repair malformed or schema-invalid JSON from another LLM call. "
+    "Return only one valid JSON object. Do not include Markdown fences."
+)
+
+
+PROMPT_REGISTRY: Dict[str, PromptSpec] = {
+    "intent_fallback": PromptSpec(
+        prompt_id="intent_fallback",
+        name="Intent fallback",
+        version=PROMPT_VERSION,
+        purpose="Parse low-confidence travel intent into strict JSON.",
+        text=INTENT_FALLBACK_SYSTEM_PROMPT,
+    ),
+    "planner_fallback": PromptSpec(
+        prompt_id="planner_fallback",
+        name="Planner fallback",
+        version=PROMPT_VERSION,
+        purpose="Generate safe executable task plans as strict JSON.",
+        text=PLANNER_FALLBACK_SYSTEM_PROMPT,
+    ),
+    "itinerary_generation": PromptSpec(
+        prompt_id="itinerary_generation",
+        name="Itinerary generation",
+        version=PROMPT_VERSION,
+        purpose="Generate structured travel itinerary JSON from task context.",
+        text=ITINERARY_GENERATION_SYSTEM_PROMPT,
+    ),
+    "response_polish": PromptSpec(
+        prompt_id="response_polish",
+        name="Response polish",
+        version=PROMPT_VERSION,
+        purpose="Polish final grounded travel response.",
+        text=RESPONSE_POLISH_SYSTEM_PROMPT,
+    ),
+    "json_repair": PromptSpec(
+        prompt_id="json_repair",
+        name="Structured JSON repair",
+        version=PROMPT_VERSION,
+        purpose="Repair malformed or schema-invalid LLM JSON output.",
+        text=JSON_REPAIR_SYSTEM_PROMPT,
+    ),
+}
+
+
+def get_prompt_metadata(prompt_id: str) -> Dict[str, str]:
+    """Get sanitized prompt metadata by id."""
+    spec = PROMPT_REGISTRY[prompt_id]
+    return spec.metadata()

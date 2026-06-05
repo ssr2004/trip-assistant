@@ -46,7 +46,11 @@ class LLMClient:
         if temperature is None:
             temperature = self.settings.LLM_TEMPERATURE
 
-        metadata = self._build_metadata(model=model, fallback=not self.available)
+        request_metadata = self._sanitize_request_metadata(request.metadata)
+        metadata = {
+            **self._build_metadata(model=model, fallback=not self.available),
+            **request_metadata,
+        }
 
         if not self.available:
             return LLMResponse(
@@ -63,6 +67,7 @@ class LLMClient:
                 error="LLM请求缺少messages。",
                 metadata={
                     **self._build_metadata(model=model),
+                    **request_metadata,
                     "error_type": "invalid_request",
                     "duration_ms": self._elapsed_ms(started_at),
                 },
@@ -87,6 +92,7 @@ class LLMClient:
                 error=None,
                 metadata={
                     **self._build_metadata(model=model),
+                    **request_metadata,
                     "response_format": request.response_format,
                     "execution_mode": "llm",
                     "duration_ms": self._elapsed_ms(started_at),
@@ -100,6 +106,7 @@ class LLMClient:
                 error=self._sanitize_error(exc),
                 metadata={
                     **self._build_metadata(model=model),
+                    **request_metadata,
                     "error_type": self._classify_error(exc),
                     "duration_ms": self._elapsed_ms(started_at),
                 },
@@ -123,6 +130,20 @@ class LLMClient:
             "fallback": fallback,
             "execution_mode": "rule_fallback" if fallback else "llm",
         }
+
+    def _sanitize_request_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep only trace-safe request metadata."""
+        allowed_keys = {
+            "prompt_id",
+            "prompt_name",
+            "prompt_version",
+            "prompt_purpose",
+            "fallback_for",
+            "repair_for",
+            "repair_failure_type",
+            "quality_gate",
+        }
+        return {key: value for key, value in (metadata or {}).items() if key in allowed_keys}
 
     def _elapsed_ms(self, started_at: float) -> int:
         """Return non-negative elapsed milliseconds for runtime observability."""

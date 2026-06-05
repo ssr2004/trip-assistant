@@ -9,7 +9,8 @@ from typing import Dict, List, Optional
 
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.llm.json_repair import parse_or_repair_json_object
-from core.llm.prompts import INTENT_FALLBACK_SYSTEM_PROMPT
+from core.llm.prompts import INTENT_FALLBACK_SYSTEM_PROMPT, get_prompt_metadata
+from core.llm.quality import audit_intent_quality
 from models.intent import TravelIntent
 
 
@@ -372,7 +373,7 @@ class IntentParser:
                 ),
             ],
             response_format="json_object",
-            metadata={"fallback_for": "intent_parse"},
+            metadata={**get_prompt_metadata("intent_fallback"), "fallback_for": "intent_parse"},
         )
         response = await self.llm_client.chat(request)
         if not response.success:
@@ -396,7 +397,7 @@ class IntentParser:
                 "weather_query, general_chat. entities must include: origin, destination, "
                 "departure_date, return_date, duration, budget, travelers, preferences."
             ),
-            metadata={"fallback_for": "intent_parse"},
+            metadata={**get_prompt_metadata("intent_fallback"), "fallback_for": "intent_parse"},
         )
         if not structured_result.success:
             rule_result["metadata"] = {
@@ -411,13 +412,31 @@ class IntentParser:
             return None
 
         validated = structured_result.validated
+        quality_result = audit_intent_quality(validated)
+        if not quality_result.passed:
+            rule_result["metadata"] = {
+                "source": "rule_fallback",
+                "llm_error_type": "quality_gate_failed",
+                "llm_model": response.metadata.get("model"),
+                "json_repair_attempted": structured_result.repair_attempted,
+                "json_repair_success": structured_result.repair_success,
+                "json_repair_error_type": structured_result.repair_error_type,
+                "prompt_id": response.metadata.get("prompt_id"),
+                "prompt_version": response.metadata.get("prompt_version"),
+                **quality_result.metadata(),
+                **self._build_llm_runtime_metadata(response.metadata, structured_result),
+            }
+            return None
         result = self._normalize_llm_intent(validated)
         result["metadata"] = {
             "source": "llm",
             "llm_model": response.metadata.get("model"),
             "provider": response.metadata.get("provider"),
+            "prompt_id": response.metadata.get("prompt_id"),
+            "prompt_version": response.metadata.get("prompt_version"),
             "json_repair_attempted": structured_result.repair_attempted,
             "json_repair_success": structured_result.repair_success,
+            **quality_result.metadata(),
             **self._build_llm_runtime_metadata(response.metadata, structured_result),
         }
         return result
