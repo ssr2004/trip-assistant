@@ -1,276 +1,307 @@
-# TravelMind：旅行AI助手
+# TravelMind - 全栈 Agent 旅行规划助手
 
-基于 LangGraph 的多 Agent 智能旅行规划系统，面向“从自然语言需求到结构化旅行方案生成”的完整业务闭环。
+TravelMind 是一个面向旅行规划场景的全栈 Agent 项目。它不是简单的聊天机器人，而是将意图识别、任务规划、工具调用、RAG 检索、外部数据接入、长期记忆和执行追踪串成一条完整工程链路，用于根据用户自然语言需求生成可执行的旅行方案。
 
-项目目标不是做一个简单聊天机器人，而是构建一个具备 Agent 能力的旅行规划系统：能够识别用户意图、抽取旅行实体、规划任务、调用工具、检索攻略和政策知识、记忆用户偏好，并生成可解释的旅行方案。
+项目重点是展示 Agent 工程能力：用户输入一句旅行需求后，系统会自动解析槽位、规划任务、调用交通/酒店/景点/天气/攻略工具，并把搜索到的攻略知识转化为内部规划信号，而不是直接把攻略原文贴给用户。
 
-## 核心能力
+## 核心亮点
 
-- **自然语言需求解析**：识别旅行规划、航班搜索、酒店搜索、景点查询、政策问答等意图。
-- **任务规划与执行**：将复杂旅行需求拆解为航班、酒店、景点、攻略、行程生成等任务。
-- **多工具协调**：通过统一 Tool Registry 管理航班、酒店、景点、政策、攻略和行程生成工具。
-- **标准工具协议**：工具统一返回 `success/data/error/metadata`，便于 Agent 识别成功、失败和数据来源。
-- **RAG 检索增强**：支持政策、攻略、FAQ 文档检索，并在回答中保留来源引用。
-- **用户记忆系统**：保存短期会话、长期偏好和历史旅行场景，用于个性化推荐。
-- **结构化旅行方案**：输出出行概览、航班推荐、酒店推荐、景点推荐、每日行程、预算估算和注意事项。
-- **工程化落地**：提供 FastAPI 接口、WebSocket 对话、Docker 部署和自动化测试。
+- **LangGraph Agent 工作流**：基于 `parse_intent -> retrieve_context -> plan_tasks -> execute_tasks -> generate_response` 的多阶段状态图，实现可追踪、可扩展的 Agent 执行链路。
+- **LLM + 规则双轨降级**：LLM 可用于意图识别和复杂任务规划；未配置 API Key 或模型输出不稳定时，自动回退到确定性规则逻辑，保证系统可运行。
+- **自增长 Agentic RAG**：本地攻略知识库未命中时，Agent 可通过 Tavily 搜索目的地攻略，进行长度过滤、相似度去重、Markdown 入库，再次检索复用。
+- **攻略作为规划信号**：RAG 不直接输出大段攻略原文，而是提取景点、路线、餐饮、住宿区域和注意事项等 `planning_insights`，用于优化每日行程。
+- **真实工具边界治理**：高德 POI、天气、12306 MCP、Tavily、Embedding 等外部能力均有清晰的真实数据边界；不可用时明确降级，不编造航班号、房态、余票或可订价格。
+- **MCP 数据源接入**：支持 12306 MCP 查询火车/高铁结果，支持高德 MCP/高德 Web API 获取 POI 信息。
+- **长期记忆与多轮上下文**：支持会话内槽位补全、路线纠正、历史行程调整和用户偏好记忆。
+- **可观测执行追踪**：每次 Agent 运行会产出 execution trace，记录意图来源、规划模式、工具耗时、降级原因、数据源和失败恢复策略。
+- **前后端完整闭环**：后端 FastAPI 提供 REST/WebSocket 接口，前端 Vue 3 + TypeScript 展示聊天、结构化行程卡片、天气/景点 artifact 和执行状态。
+- **质量门禁**：内置 pytest、Planner benchmark、Agent E2E、RAG benchmark、前端构建和 Playwright E2E 的统一质量检查脚本。
 
 ## 技术栈
 
-| 模块 | 技术 |
-|---|---|
-| Agent 编排 | LangGraph |
-| LLM 接入 | DeepSeek / GLM / Qwen / OpenAI 兼容接口 |
-| RAG | LangChain + FAISS / Chroma |
-| Web 后端 | FastAPI |
-| 前端方向 | Vue 3 + Element Plus |
-| 数据库 | SQLite / PostgreSQL |
-| 配置管理 | pydantic-settings + `.env` |
-| 测试 | pytest + pytest-asyncio |
-| 部署 | Docker / Docker Compose |
+| 层级 | 技术 |
+| --- | --- |
+| Backend | Python, FastAPI, Pydantic, SQLAlchemy |
+| Agent | LangGraph, LangChain Core, OpenAI-compatible LLM Client |
+| LLM | DeepSeek-compatible / OpenAI-compatible API |
+| RAG | FAISS, Markdown Retriever, Tavily Search, Embedding Client |
+| Embedding | 阿里云百炼 `text-embedding-v4` compatible endpoint |
+| Tools | 高德 POI/天气/路线、12306 MCP、Tavily、MCP Client |
+| Cache | Redis with in-memory fallback |
+| Frontend | Vue 3, TypeScript, Vite, Playwright |
+| Quality | pytest, frontend build, E2E, custom quality gate |
+| Deployment | Docker, docker-compose |
 
-## 环境要求
+## Agent 工作流
 
-当前开发验证环境：
-
-```text
-Python 3.13.7
+```mermaid
+flowchart LR
+    A["用户自然语言需求"] --> B["IntentParser<br/>意图识别与槽位抽取"]
+    B --> C["RAG + Memory<br/>检索攻略/政策/用户偏好"]
+    C --> D["TaskPlanner<br/>模板规划 + LLM 复杂规划"]
+    D --> E["ToolRegistry<br/>交通/酒店/景点/天气/攻略工具"]
+    E --> F["ResponseBuilder<br/>结构化旅行方案"]
+    E --> G["Execution Trace<br/>执行链路与降级原因"]
+    F --> H["Vue 前端展示<br/>聊天 + Artifact Cards"]
 ```
 
-依赖文件已按 Python 3.13 兼容性调整。若后续接入某些只支持低版本 Python 的向量库或深度学习组件，也可以选择 Python 3.11 作为部署环境。
+一次完整旅行规划通常会经过：
+
+1. 解析用户输入中的出发地、目的地、日期、天数、预算、偏好。
+2. 判断是否缺少关键槽位，必要时先追问。
+3. 检索目的地攻略知识库；低置信未命中时触发 Tavily 搜索并入库。
+4. 规划并执行交通、酒店、景点、天气、攻略和行程生成任务。
+5. 将工具结果和 RAG 规划信号融合成最终旅行计划。
+6. 保存对话历史、结构化 artifacts 和执行 trace。
+
+## 自增长 RAG 设计
+
+TravelMind 的攻略知识库不是固定静态文档，而是具备自增长能力。
+
+```mermaid
+flowchart TD
+    A["用户请求目的地旅行规划"] --> B["本地攻略 RAG 检索"]
+    B --> C{"相似度是否命中"}
+    C -->|命中| D["提取 planning_insights"]
+    C -->|未命中| E["调用 Tavily 搜索攻略"]
+    E --> F["长度过滤 / 低质量过滤"]
+    F --> G["相似度去重"]
+    G --> H["生成 Markdown 攻略文档"]
+    H --> I["二次 RAG 检索"]
+    I --> D
+    D --> J["优化每日行程"]
+```
+
+关键工程点：
+
+- 使用相似度阈值判断本地知识是否可用。
+- 搜索内容入库前进行长度过滤，避免短内容污染向量库。
+- 与已有 chunk 做相似度去重，避免重复文档导致检索质量下降。
+- 对小红书站点壳、备案页、广告话术、图片链接、导游营销文本做过滤。
+- 生成的攻略文档持久化到 `rag/documents/guides/generated/`，后续相同目的地可复用。
+
+## 工具能力与数据边界
+
+TravelMind 强调真实数据边界：能查到真实结果就展示，查不到就明确降级，不用 mock 伪装成真实数据。
+
+| 能力 | 当前实现 | 数据边界 |
+| --- | --- | --- |
+| 火车/高铁 | 12306 MCP | 展示真实 MCP 返回的车次、站点、时间、席别/票价字段 |
+| 航班 | 高德机场 POI 衔接 | 当前不生成航班号、票价、舱位、余票 |
+| 酒店 | 高德 POI / 高德 MCP | 展示真实酒店 POI、地址、评分、电话；不生成房态、房型、可订价格 |
+| 景点 | 高德 POI + 动态 RAG | 展示真实 POI 和来源；可结合攻略信号优化行程 |
+| 天气 | 高德天气 API | 展示目的地天气预报和旅行建议 |
+| 攻略 | 本地 RAG + Tavily 搜索 | 攻略作为内部规划依据，完整旅行规划不直接展示攻略原文 |
+| 记忆 | 短期记忆 + 长期偏好 | 支持多轮槽位填充、偏好复用和行程修改 |
 
 ## 项目结构
 
 ```text
 trip-assistant/
-├── app/                    # FastAPI 应用入口和接口
-│   ├── main.py
-│   └── config.py
-├── core/                   # Agent 核心流程
-│   ├── agent.py            # 主 Agent 工作流
-│   ├── intent.py           # 意图识别与实体抽取
-│   ├── planner.py          # 任务规划器
-│   ├── response_builder.py # 工具结果聚合和最终回复生成
-│   ├── state.py            # LangGraph 状态定义
-│   └── memory/             # 记忆系统实现
-├── database/               # 数据库初始化和后续迁移脚本
-├── docs/                   # 正式项目文档，进入 Git 管理
-├── frontend/               # 前端展示，后续升级为 Vue 3 + Element Plus
-├── models/                 # Pydantic 数据模型
-├── rag/                    # RAG 检索系统
-│   └── documents/          # 政策、攻略等知识库文档
-├── tests/                  # 自动化测试
-├── tools/                  # 工具注册表和业务工具
-├── .dockerignore           # Docker 构建忽略规则
-├── .env.example            # 环境变量示例，不包含真实密钥
+├── app/                    # FastAPI 应用入口、API 协议、配置
+├── core/                   # Agent 编排、意图识别、任务规划、记忆、trace
+│   ├── llm/                # OpenAI-compatible LLM 客户端、prompt、JSON 修复、质量审计
+│   └── memory/             # 短期记忆、长期记忆、偏好抽取
+├── tools/                  # 交通、酒店、景点、攻略、政策、天气、路线工具
+├── rag/                    # 本地检索、自增长攻略生成、Embedding、动态 RAG
+│   └── documents/          # 本地政策/攻略 Markdown 知识库
+├── frontend/               # Vue 3 + TypeScript 前端
+├── tests/                  # 后端单测、Agent 链路测试、工具测试
+├── scripts/                # 质量门禁和评测脚本
+├── data/                   # SQLite 数据、会话历史、运行数据
 ├── Dockerfile
 ├── docker-compose.yml
-├── pytest.ini
-├── requirements.txt
-└── README.md
+└── requirements.txt
 ```
 
-> `local-docs/` 用于存放本地方案、模块说明和开发草稿，已在 `.gitignore` 中排除，不进入 Git 管理。
+## 快速启动
 
-## 快速开始
-
-### 1. 进入项目目录
+### 1. 后端
 
 ```powershell
 cd trip-assistant
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
-### 2. 创建虚拟环境
-
-Windows PowerShell：
-
-```powershell
-python -m venv --prompt trip-assistant .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-macOS / Linux：
-
-```bash
-python -m venv --prompt trip-assistant .venv
-source .venv/bin/activate
-```
-
-### 3. 安装依赖
-
-```powershell
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-如果只想检查当前环境依赖是否存在冲突：
-
-```powershell
-python -m pip check
-```
-
-### 4. 配置环境变量
-
-Windows PowerShell：
-
-```powershell
-Copy-Item .env.example .env
-```
-
-macOS / Linux：
+macOS / Linux:
 
 ```bash
 cp .env.example .env
 ```
 
-然后根据实际情况填写 `.env`。不要将真实 API Key 写入代码或提交到 Git。
-
-当前 `.env.example` 已预留：
-
-```text
-LLM_API_KEY
-LLM_BASE_URL
-EMBEDDING_API_KEY
-EMBEDDING_BASE_URL
-AMADEUS_API_KEY
-AMADEUS_API_SECRET
-AMAP_API_KEY
-WEATHER_API_KEY
-DATABASE_URL
-REDIS_URL
-```
-
-### 5. 启动后端服务
+按需在 `.env` 中配置 API Key，然后启动：
 
 ```powershell
-python -m uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-服务启动后访问：
+后端地址：
+
+- API: `http://localhost:8000`
+- Swagger: `http://localhost:8000/docs`
+
+### 2. 前端
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+前端地址：
 
 ```text
-http://localhost:8000/
+http://localhost:5173
 ```
+
+如果后端改用其他端口，例如 `8001`：
+
+```powershell
+$env:VITE_API_TARGET="http://127.0.0.1:8001"
+npm run dev -- --port 5173
+```
+
+## 环境变量
+
+复制 `.env.example` 为 `.env` 后配置。
+
+核心配置：
+
+```env
+# LLM
+LLM_PROVIDER=deepseek
+LLM_MODEL=deepseek-v4-flash
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_PLANNER_MODE=auto
+ITINERARY_LLM_ENABLED=true
+
+# Embedding
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_API_KEY=
+EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+
+# Tavily Search
+TAVILY_SEARCH_ENABLED=true
+TAVILY_API_KEY=
+
+# AMap
+AMAP_API_KEY=
+
+# MCP
+MCP_ENABLED=true
+MCP_12306_ENABLED=true
+MCP_AMAP_ENABLED=true
+
+# Cache
+EXTERNAL_API_CACHE_BACKEND=redis
+REDIS_URL=redis://localhost:6379/0
+```
+
+说明：
+
+- 未配置 `LLM_API_KEY` 时，系统使用规则 fallback。
+- 未配置 `EMBEDDING_API_KEY` 时，系统使用本地确定性向量降级。
+- 未配置 `TAVILY_API_KEY` 时，不会编造攻略，只会明确降级。
+- Redis 不可用时，外部 API 缓存会降级为内存缓存。
 
 ## Docker 启动
 
-启动前先准备本地 `.env`，真实 Key 只写入本地 `.env`，不要提交：
+```powershell
+docker compose up --build
+```
 
-```bash
-cp .env.example .env
+兼容旧版 Docker Compose 命令：
+
+```powershell
 docker-compose up -d
 ```
 
-服务默认暴露：
+默认启动：
 
-```text
-http://localhost:8000/
-```
+- Backend: `http://localhost:8000`
+- Redis: compose 内部服务
 
-`docker-compose.yml` 会将 `./data` 挂载到容器 `/app/data`，用于 SQLite、长期记忆和运行历史等本地数据。Redis 仅在 compose 内部网络暴露给后端服务，不默认映射到宿主机。
+Redis 仅在 compose 内部网络暴露，不直接映射到宿主机端口。
 
 ## API 示例
 
-### 健康检查
-
-```bash
-curl http://localhost:8000/
+```powershell
+Invoke-RestMethod `
+  -Uri http://localhost:8000/api/chat `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body '{"message":"我想从太原去郑州玩3天，预算3000，偏好历史文化和当地美食"}'
 ```
 
-### 对话接口
+响应包含：
 
-```bash
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "我要从郑州去杭州玩三天，预算3000，6月10日出发"}'
-```
+- `response`：面向用户的旅行规划文本
+- `artifacts`：前端可展示的结构化行程、景点、天气、路线等数据
+- `execution_trace`：Agent 执行链路、工具状态、耗时、降级原因
 
-### WebSocket 对话
+## 质量门禁
 
-```text
-ws://localhost:8000/ws/chat
-```
-
-## 测试
+运行完整质量门禁：
 
 ```powershell
-python -m pytest
+.venv\Scripts\python.exe scripts\run_quality_gate.py
 ```
 
-完整本地质量门禁：
+输出机器可读结果：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_quality_gate.py
+.venv\Scripts\python.exe scripts\run_quality_gate.py --json-compact
 ```
 
-需要机器可读结果时：
+质量门禁包含：
+
+- 后端 pytest
+- Planner 质量评测
+- Agent E2E 评测
+- RAG 质量评测
+- 前端 TypeScript/Vite 构建
+- Playwright E2E
+
+也可以单独运行：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_quality_gate.py --json-compact
+.venv\Scripts\python.exe -m pytest -q tests --tb=short
+cd frontend
+npm run build
+npm run test:e2e
 ```
 
-当前已覆盖：
-
-- 意图识别与实体抽取；
-- 智能任务规划；
-- 工具注册和工具执行；
-- 工具标准返回结构；
-- Agent 最终响应聚合；
-- 完整 Agent 冒烟流程。
-
-## 数据与密钥策略
-
-- 开发阶段优先使用模拟数据和本地文档，保证 Agent 闭环稳定。
-- 后续可接入 Amadeus、高德地图等合规开放 API。
-- 不建议爬取携程、飞猪、去哪儿等平台数据。
-- 所有真实 API Key 通过 `.env` 管理，严禁硬编码到代码中。
-- `.env`、`.venv`、运行时数据和本地开发文档不进入 Git。
-
-## 开发规范
-
-本项目按业务功能模块逐步开发：
-
-1. 一个业务功能模块一个一个实现。
-2. 每完成一个模块，补充必要测试。
-3. 每完成一个模块，写一份模块说明文档到 `local-docs/`。
-4. 每完成一个模块，提交一次 Git。
-5. Commit message 使用中文，简洁明确。
-6. 提交后推送到远程仓库。
-
-模块说明文档建议包含：
-
-```text
-1. 模块名称
-2. 模块目标
-3. 改动文件
-4. 实现思路
-5. 技术细节
-6. 测试方式
-7. Git commit 信息
-8. 后续可优化点
-```
-
-## 当前开发路线
+## 当前能力边界
 
 已完成：
 
-1. 项目骨架治理与开发规范整理。
-2. 旅行需求解析模块：意图识别、实体抽取、缺失信息追问。
-3. 智能任务规划模块：将旅行需求拆解为可执行任务。
-4. 旅行工具补齐：政策检索、攻略检索、行程生成。
-5. Agent 响应生成：聚合航班、酒店、景点、攻略和行程结果。
-6. 工具返回结构统一：统一 `success/data/error/metadata` 协议。
-7. 配置治理与依赖兼容性修复。
+- 多意图识别：旅行规划、交通查询、酒店查询、景点查询、天气查询、攻略问答、政策问答、行程修改。
+- 多轮槽位填充：用户先说路线、后补日期/天数时可继承上下文。
+- Agent 任务编排：按任务依赖注入工具结果，支持攻略检索先于行程生成。
+- 自增长 RAG：Tavily 搜索、文档生成、去重、二次检索。
+- 真实数据边界：不使用 mock 补全航班库存、酒店房态、余票等敏感结果。
+- 执行可观测性：trace 记录任务、工具、降级、缓存、耗时和失败恢复。
 
-后续计划：
+未夸大声明的边界：
 
-1. 抽象统一工具结果模型和工具基类辅助方法。
-2. 接入 LLM，增强意图解析、任务规划和最终回复生成。
-3. 升级 RAG：向量检索、混合检索、重排序和 grounded answer。
-4. 接入 Memory 用户画像：偏好提取、长期记忆和个性化推荐。
-5. 接入天气、地图和合规真实 API。
-6. 开发 Vue 3 + Element Plus 前端展示。
+- 当前没有接入真实航班库存 API，因此不展示真实航班号、舱位、余票和票价。
+- 酒店目前是 POI 级真实信息，不代表 OTA 可订房态和实时价格。
+- 预算估算会标注可信度，缺少真实价格字段时只作为粗略参考。
 
-## 许可证
+## 适合展示的工程点
 
-MIT License
+这个项目可以重点展示以下 Agent 开发能力：
+
+1. 如何把自然语言需求转成结构化意图和可执行任务图。
+2. 如何在 LLM 不稳定或 API 不可用时设计确定性降级链路。
+3. 如何让 RAG 从“展示检索结果”升级为“影响规划决策的结构化信号”。
+4. 如何治理外部工具数据边界，避免 Agent 编造不存在的库存信息。
+5. 如何为 Agent 系统设计 execution trace、质量门禁和端到端测试。
+
+## License
+
+This project is for learning and portfolio demonstration. Please configure your own API keys locally and do not commit secrets.

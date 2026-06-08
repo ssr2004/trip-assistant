@@ -29,19 +29,28 @@ class FakeLLMClient:
 
 
 @pytest.mark.asyncio
-async def test_itinerary_tool_defaults_to_template_generation():
-    """行程工具默认使用模板生成"""
-    llm_client = FakeLLMClient(available=True)
+async def test_itinerary_tool_defaults_to_llm_when_available():
+    """行程工具默认在LLM可用时优先使用LLM生成"""
+    llm_content = """
+    {
+      "itinerary": [
+        {"day": 1, "title": "LLM生成的杭州行程", "activities": ["抵达杭州", "西湖慢游"], "notes": "控制节奏。"}
+      ],
+      "summary": "LLM生成行程。",
+      "budget_tips": "预算按实际工具结果调整。"
+    }
+    """
+    llm_client = FakeLLMClient(content=llm_content, available=True)
     tool = ItineraryTool(llm_client=llm_client)
 
-    result = await tool.execute(origin="郑州", destination="杭州", duration=3, budget=3000)
+    result = await tool.execute(origin="郑州", destination="杭州", duration=1, budget=3000)
 
     assert result["success"] is True
-    assert result["data"]["generation_mode"] == "template"
+    assert result["data"]["generation_mode"] == "llm"
     assert result["data"]["context_summary"]["flight_count"] == 0
-    assert result["metadata"]["source"] == "template_itinerary_generator"
-    assert len(result["data"]["itinerary"]) == 3
-    assert llm_client.calls == 0
+    assert result["metadata"]["source"] == "llm_itinerary_generator"
+    assert len(result["data"]["itinerary"]) == 1
+    assert llm_client.calls == 1
 
 
 @pytest.mark.asyncio
@@ -180,6 +189,34 @@ async def test_itinerary_tool_passes_context_to_llm_prompt():
     assert result["data"]["context_summary"]["flight_count"] == 1
     assert "CZ123" in llm_client.last_request.messages[1].content
     assert "西湖酒店" in llm_client.last_request.messages[1].content
+
+
+@pytest.mark.asyncio
+async def test_itinerary_tool_rejects_ungrounded_llm_place():
+    """LLM使用前置工具结果之外的具体景点时必须回退模板"""
+    llm_content = """
+    {
+      "itinerary": [
+        {"day": 1, "title": "杭州迪士尼乐园游", "activities": ["迪士尼乐园", "西湖"], "notes": "迪士尼乐园不在工具结果中。"}
+      ],
+      "summary": "包含编造景点的行程。",
+      "budget_tips": "无"
+    }
+    """
+    llm_client = FakeLLMClient(content=llm_content)
+    tool = ItineraryTool(llm_client=llm_client, llm_enabled=True)
+    context = {
+        "attractions": [{"name": "西湖"}],
+        "guide": {"planning_insights": {"highlights": ["西湖"]}},
+    }
+
+    result = await tool.execute(destination="杭州", duration=1, context=context)
+
+    assert result["data"]["generation_mode"] == "template"
+    assert result["metadata"]["fallback_reason"] == "grounding_validation_failed"
+    assert result["metadata"]["grounding_validation_passed"] is False
+    assert "ungrounded_place:1:迪士尼乐园" in result["metadata"]["grounding_issues"]
+    assert llm_client.calls == 1
 
 
 @pytest.mark.asyncio

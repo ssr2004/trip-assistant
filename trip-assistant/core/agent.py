@@ -77,7 +77,7 @@ class TravelAgent:
         message = state["messages"][-1].content
         intent = await self.intent_parser.parse_async(message)
         session_id = state.get("session_id", "default")
-        intent = self._merge_pending_intent(session_id, intent)
+        intent = self._merge_pending_intent(session_id, intent, message)
         return {"intent": intent}
 
     async def _retrieve_context(self, state: AgentState) -> Dict:
@@ -96,7 +96,12 @@ class TravelAgent:
             "memory_context": memory_context,
         }
 
-    def _merge_pending_intent(self, session_id: str, current_intent: Dict[str, Any]) -> Dict[str, Any]:
+    def _merge_pending_intent(
+        self,
+        session_id: str,
+        current_intent: Dict[str, Any],
+        user_message: str = "",
+    ) -> Dict[str, Any]:
         """Merge slot-filling replies with the latest pending travel intent in the same session."""
         key = session_id or "default"
         current_intent = dict(current_intent or {})
@@ -104,8 +109,18 @@ class TravelAgent:
         current_type = current_intent.get("intent") or "general_chat"
         pending = self.session_pending_intents.get(key)
 
+        if pending and self._is_new_independent_travel_request(current_intent, user_message):
+            self._update_pending_intent(key, current_intent)
+            return current_intent
+
         if pending and self._should_merge_pending_intent(current_intent, pending):
             pending_entities = dict(pending.get("entities") or {})
+            current_entities = self._reinterpret_single_city_slot_fill(
+                current_entities=current_entities,
+                pending_entities=pending_entities,
+                pending_missing_slots=pending.get("missing_slots") or [],
+                user_message=user_message,
+            )
             merged_entities = dict(pending_entities)
             for field, value in current_entities.items():
                 if self._has_entity_value(value):
@@ -140,6 +155,74 @@ class TravelAgent:
 
         self._update_pending_intent(key, current_intent)
         return current_intent
+
+    def _is_new_independent_travel_request(self, current_intent: Dict[str, Any], user_message: str = "") -> bool:
+        """Return whether the current turn starts a new route instead of filling old slots."""
+        if (current_intent.get("intent") or "") != "travel_plan":
+            return False
+
+        entities = current_intent.get("entities") or {}
+        if not self._has_entity_value(entities.get("destination")):
+            return False
+        if self._is_single_city_message(user_message):
+            return False
+
+        text = (user_message or "").strip()
+        correction_markers = ["我是", "不是", "更正", "纠正", "改成", "换成", "啊"]
+        if any(marker in text for marker in correction_markers):
+            return False
+
+        new_request_markers = ["我想", "我要", "计划", "安排", "规划", "旅行", "旅游", "玩", "去"]
+        return any(marker in text for marker in new_request_markers)
+
+    def _is_single_city_message(self, user_message: str = "") -> bool:
+        """Return whether the message is only one known city, allowing light punctuation."""
+        text = (user_message or "").strip()
+        if not text:
+            return False
+        normalized = re.sub(r"[\s,，。.!！？?、]+", "", text)
+        cities = self.intent_parser._find_cities(normalized)
+        return len(cities) == 1 and normalized == cities[0]
+
+    def _reinterpret_single_city_slot_fill(
+        self,
+        current_entities: Dict[str, Any],
+        pending_entities: Dict[str, Any],
+        pending_missing_slots: List[str],
+        user_message: str = "",
+    ) -> Dict[str, Any]:
+        """Map a one-city follow-up answer to the missing route slot.
+
+        Example:
+        - pending: destination=上海, missing origin
+        - current: destination=杭州
+        - result: origin=杭州, destination=None
+
+        This prevents a slot-filling answer from overwriting the existing destination.
+        """
+        if not pending_missing_slots:
+            return current_entities
+
+        current_origin = current_entities.get("origin")
+        current_destination = current_entities.get("destination")
+        route_values = [value for value in [current_origin, current_destination] if self._has_entity_value(value)]
+        if len(route_values) == 0 and user_message:
+            route_values = self.intent_parser._find_cities(user_message)
+
+        if len(route_values) != 1:
+            return current_entities
+
+        city_value = route_values[0]
+        adjusted = dict(current_entities)
+        if "origin" in pending_missing_slots and self._has_entity_value(pending_entities.get("destination")):
+            adjusted["origin"] = city_value
+            adjusted["destination"] = None
+            return adjusted
+        if "destination" in pending_missing_slots and self._has_entity_value(pending_entities.get("origin")):
+            adjusted["origin"] = None
+            adjusted["destination"] = city_value
+            return adjusted
+        return current_entities
 
     def _should_merge_pending_intent(self, current_intent: Dict[str, Any], pending: Dict[str, Any]) -> bool:
         """Return whether current message should fill or correct the pending travel context."""
@@ -564,10 +647,10 @@ class TravelAgent:
         failure_category: str | None,
     ) -> str:
         """Return the executor-level recovery strategy applied to a task."""
-        if fallback_used and success:
-            return "provider_fallback"
         if dependency_degraded and success:
             return "partial_dependency_context"
+        if fallback_used and success:
+            return "provider_fallback"
         if not success and failure_category == "missing_tool":
             return "record_unrecoverable_error"
         if not success:

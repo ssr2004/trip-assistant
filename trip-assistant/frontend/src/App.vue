@@ -9,7 +9,8 @@ import type { ChatArtifacts, ChatMessage, ExecutionTrace, ExternalStatusResponse
 const SESSION_STORAGE_KEY = "travelMindSessionId";
 
 const input = ref("");
-const sessionId = ref(window.localStorage.getItem(SESSION_STORAGE_KEY) || "");
+window.localStorage.removeItem(SESSION_STORAGE_KEY);
+const sessionId = ref("");
 const loading = ref(false);
 const statusLoading = ref(false);
 const statusError = ref("");
@@ -102,7 +103,6 @@ async function submitMessage(messageOverride = "") {
     const data = await sendChatMessage(message, sessionId.value);
     if (data.session_id) {
       sessionId.value = data.session_id;
-      window.localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
     }
     addMessage("assistant", data.response || "处理完成", data.artifacts || {}, data.execution_trace || { steps: [], summary: {} });
   } catch (error) {

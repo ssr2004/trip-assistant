@@ -237,6 +237,8 @@ class IntentParser:
         found_cities = self._find_cities(text)
         if len(found_cities) >= 2:
             return found_cities[0], found_cities[1]
+        if len(found_cities) == 1 and re.search(rf"从{re.escape(found_cities[0])}(?:出发)?", text):
+            return found_cities[0], None
         if len(found_cities) == 1 and intent in {"hotel_search", "attraction_search", "travel_plan", "guide_query", "dynamic_knowledge_query", "itinerary_revision", "weather_query"}:
             return None, found_cities[0]
         return None, None

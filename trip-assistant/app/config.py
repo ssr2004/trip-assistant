@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     LLM_PLANNER_MODE: str = "auto"  # auto, off, always
     LLM_PLANNER_ENABLED: bool = False
     LLM_PLANNER_COMPLEXITY_THRESHOLD: int = 3
+    ITINERARY_LLM_ENABLED: bool = True
 
     # Embedding配置
     EMBEDDING_PROVIDER: str = "openai"  # openai, zhipu

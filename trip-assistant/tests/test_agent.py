@@ -103,6 +103,44 @@ async def test_agent_pending_context_is_session_scoped(agent):
 
 
 @pytest.mark.asyncio
+async def test_agent_fills_missing_origin_from_single_city_followup(agent):
+    """上一轮已知目的地时，二轮单城市回答应补出发地而不是覆盖目的地"""
+    session_id = "test-session-origin-followup-single-city"
+
+    first = await agent.arun("我想明天去上海玩两天", session_id)
+    second = await agent.arun("杭州", session_id)
+
+    assert "请问您准备从哪个城市出发去上海" in first
+    assert "已为您规划杭州到上海的2天旅行方案" in second
+    assert "请问您准备从哪个城市出发去杭州" not in second
+
+
+@pytest.mark.asyncio
+async def test_agent_fills_missing_destination_from_single_city_followup(agent):
+    """上一轮已知出发地时，二轮单城市回答应补目的地"""
+    session_id = "test-session-destination-followup-single-city"
+
+    first = await agent.arun("我想明天从杭州出发旅行两天", session_id)
+    second = await agent.arun("上海", session_id)
+
+    assert "候选目的地" in first
+    assert "已为您规划杭州到上海的2天旅行方案" in second
+
+
+@pytest.mark.asyncio
+async def test_agent_does_not_reuse_old_origin_for_new_destination_request(agent):
+    """同一会话里的新目的地需求不能继承上一轮出发地"""
+    session_id = "test-session-new-request-no-origin-leak"
+
+    await agent.arun("我要明天从深圳去上海玩3天", session_id)
+    response = await agent.arun("我想去北京玩两天", session_id)
+
+    assert "请问您准备从哪个城市出发去北京" in response
+    assert "已为您规划深圳到北京" not in response
+    assert "路线：深圳 → 北京" not in response
+
+
+@pytest.mark.asyncio
 async def test_flight_search(agent):
     """测试无真实航班库存时不返回模拟航班"""
     response = await agent.arun("搜索从北京到上海的航班", "test-session-2")

@@ -53,6 +53,24 @@ def test_frontend_calls_chat_and_external_status_apis():
     assert "llmStatus" in app_vue
 
 
+def test_frontend_vite_proxy_defaults_to_active_backend_port():
+    """Vite dev proxy should target the backend port used by local startup scripts."""
+    vite_config = (FRONTEND_DIR / "vite.config.js").read_text(encoding="utf-8")
+
+    assert 'process.env.VITE_API_TARGET || "http://127.0.0.1:8001"' in vite_config
+    assert 'process.env.VITE_API_TARGET || "http://127.0.0.1:8000"' not in vite_config
+
+
+def test_frontend_does_not_restore_stale_session_on_reload():
+    """刷新页面时不能静默复用旧session，避免旧出发地污染新需求。"""
+    app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
+
+    assert 'const sessionId = ref("");' in app_vue
+    assert "window.localStorage.getItem(SESSION_STORAGE_KEY)" not in app_vue
+    assert "window.localStorage.setItem(SESSION_STORAGE_KEY" not in app_vue
+    assert "window.localStorage.removeItem(SESSION_STORAGE_KEY)" in app_vue
+
+
 def test_frontend_components_are_split_by_responsibility():
     """前端已拆分为聊天、状态和结构化卡片组件"""
     app_vue = (FRONTEND_DIR / "src" / "App.vue").read_text(encoding="utf-8")
