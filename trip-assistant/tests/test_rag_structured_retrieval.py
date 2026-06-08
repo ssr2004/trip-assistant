@@ -54,9 +54,15 @@ async def test_policy_tool_returns_structured_sources():
 
 
 @pytest.mark.asyncio
-async def test_guide_tool_returns_structured_sources():
+async def test_guide_tool_returns_structured_sources(tmp_path):
     """攻略工具返回结构化攻略来源"""
-    tool = GuideTool()
+    guides_dir = tmp_path / "guides"
+    guides_dir.mkdir()
+    (guides_dir / "hangzhou.md").write_text(
+        "# 杭州旅游攻略\n\n## 三天路线\n杭州三天旅行可以安排西湖、灵隐寺和宋城。",
+        encoding="utf-8",
+    )
+    tool = GuideTool(documents_dir=guides_dir, auto_generate=False)
 
     result = await tool.execute(query="杭州三天旅行攻略", destination="杭州")
 
@@ -71,6 +77,27 @@ async def test_guide_tool_returns_structured_sources():
     assert first_source["score"] > 0
     assert "杭州" in first_source["matched_terms"]
     assert first_source["excerpt"]
+
+
+@pytest.mark.asyncio
+async def test_guide_tool_does_not_cross_destination_documents(tmp_path):
+    """目的地没有本地攻略时不能引用其他城市攻略"""
+    guides_dir = tmp_path / "guides"
+    guides_dir.mkdir()
+    (guides_dir / "hangzhou.md").write_text(
+        "# 杭州旅游攻略\n\n杭州三天旅行可以安排西湖、灵隐寺和宋城。",
+        encoding="utf-8",
+    )
+    tool = GuideTool(documents_dir=guides_dir, auto_generate=False)
+
+    result = await tool.execute(query="烟台三天旅行攻略", destination="烟台")
+
+    assert result["success"] is True
+    assert result["data"]["sources"] == []
+    assert "暂未检索到烟台的本地攻略文档" in result["data"]["answer"]
+    assert "杭州旅游攻略" not in result["data"]["answer"]
+    assert result["metadata"]["destination_filter_applied"] is True
+    assert result["metadata"]["destination_document_count"] == 0
 
 
 def test_policy_response_displays_source_title():
@@ -112,8 +139,9 @@ def test_policy_response_displays_source_title():
 
 
 def test_guide_response_displays_source_title():
-    """完整旅行规划中的攻略来源展示标题"""
+    """完整旅行规划只展示攻略规划依据，不输出RAG原文"""
     builder = ResponseBuilder()
+    raw_guide_text = "这是很长的攻略原文，不应该在完整旅行规划里直接展示。导游小西免费咨询，图片链接 abee_b.jpg。"
 
     response = builder.build(
         intent={"intent": "travel_plan", "entities": {"origin": "郑州", "destination": "杭州", "duration": 3}},
@@ -142,7 +170,18 @@ def test_guide_response_displays_source_title():
                     "data": {
                         "query": "杭州三天旅行攻略",
                         "destination": "杭州",
-                        "answer": "根据本地攻略文档《杭州旅游攻略》，为您检索到杭州相关建议。",
+                        "answer": raw_guide_text,
+                        "planning_insights": {
+                            "highlights": ["西湖", "灵隐寺"],
+                            "decision_basis": ["优先围绕西湖和灵隐寺组织游览顺序"],
+                            "route_hints": ["西湖和灵隐寺适合分成两天安排。"],
+                            "source_briefs": [
+                                {
+                                    "title": "杭州旅游攻略",
+                                    "source": "rag/documents/guides/hangzhou_guide.md",
+                                }
+                            ],
+                        },
                         "sources": [
                             {
                                 "title": "杭州旅游攻略",
@@ -162,5 +201,9 @@ def test_guide_response_displays_source_title():
         ],
     )
 
-    assert "七、攻略与注意事项" in response
-    assert "杭州旅游攻略：rag/documents/guides/hangzhou_guide.md" in response
+    assert "攻略与注意事项" not in response
+    assert "规划采用的攻略要点" not in response
+    assert "规划决策" not in response
+    assert "杭州旅游攻略：rag/documents/guides/hangzhou_guide.md" not in response
+    assert raw_guide_text not in response
+    assert "导游小西免费咨询" not in response

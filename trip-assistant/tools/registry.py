@@ -109,8 +109,10 @@ class ToolRegistry:
         from tools.itinerary import ItineraryTool
         from tools.routes import RouteTool
         from tools.weather import WeatherTool
+        from tools.trains import TrainTool
 
         self.register(FlightTool())
+        self.register(TrainTool())
         self.register(HotelTool())
         self.register(AttractionTool())
         self.register(PolicyTool())

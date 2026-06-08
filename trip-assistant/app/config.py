@@ -39,6 +39,18 @@ class Settings(BaseSettings):
     # RAG配置
     RAG_TOP_K: int = 5
     RAG_SCORE_THRESHOLD: float = 0.5
+    RAG_MIN_HIT_SCORE: float = 0.55
+    RAG_CHUNK_DEDUPE_THRESHOLD: float = 0.88
+    RAG_MIN_CHUNK_LENGTH: int = 80
+
+    # Tavily搜索增强配置
+    TAVILY_SEARCH_ENABLED: bool = True
+    TAVILY_API_KEY: str = ""
+    TAVILY_MAX_RESULTS: int = 5
+    TAVILY_INCLUDE_DOMAINS: str = ""
+    TAVILY_SEARCH_DEPTH: str = "basic"
+    TAVILY_INCLUDE_RAW_CONTENT: bool = True
+    TAVILY_GUIDE_TTL_DAYS: int = 30
 
     # 数据库配置
     DATABASE_URL: str = "sqlite:///./data/travelmind.db"
@@ -57,6 +69,22 @@ class Settings(BaseSettings):
     AMADEUS_API_SECRET: str = ""
     AMAP_API_KEY: str = ""  # 高德地图API
     WEATHER_API_KEY: str = ""
+
+    # MCP真实数据源配置
+    MCP_ENABLED: bool = True
+    MCP_TIMEOUT: int = 20
+    MCP_12306_ENABLED: bool = True
+    MCP_12306_URL: str = ""
+    MCP_12306_COMMAND: str = "uvx"
+    MCP_12306_ARGS: str = "mcp-server-12306"
+    MCP_AMAP_ENABLED: bool = True
+    MCP_AMAP_URL: str = ""
+    MCP_AMAP_COMMAND: str = "npx"
+    MCP_AMAP_ARGS: str = "-y @amap/amap-maps-mcp-server"
+    MCP_FLIGHT_ENABLED: bool = False
+    MCP_FLIGHT_URL: str = ""
+    MCP_FLIGHT_COMMAND: str = ""
+    MCP_FLIGHT_ARGS: str = ""
 
     # 记忆系统配置
     MEMORY_MAX_TURNS: int = 20  # 短期记忆最大轮数

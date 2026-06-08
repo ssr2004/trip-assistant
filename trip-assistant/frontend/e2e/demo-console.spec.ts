@@ -29,6 +29,8 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
   await expect(page.getByText("已为您规划郑州到杭州的3天旅行方案")).toBeVisible();
   await expect(page.getByText("每日行程").first()).toBeVisible();
   await expect(page.getByText("景点推荐").first()).toBeVisible();
+  await expect(page.getByText("Execution Trace").first()).toHaveCount(0);
+  await page.getByRole("button", { name: "显示调试信息" }).first().click();
   await expect(page.getByText("Execution Trace").first()).toBeVisible();
   await expect(page.getByText("Planner auto -> llm").first()).toBeVisible();
   await expect(page.getByText("LLM 2 calls").first()).toBeVisible();
@@ -40,6 +42,7 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
   await page.getByRole("button", { name: /2 雨天调整/ }).click();
   await expect(page.getByText("已根据您的要求调整行程：雨天优先安排室内景点。")).toBeVisible();
   await expect(page.getByText("雨天调整依据")).toBeVisible();
+  await page.getByRole("button", { name: "显示调试信息" }).last().click();
   await expect(page.getByText("Revision").first()).toBeVisible();
 
   await page.getByRole("button", { name: /3 路线优化/ }).click();
@@ -49,6 +52,7 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
 
   await page.getByRole("button", { name: /4 景点追问/ }).click();
   await expect(page.getByText("根据刚才推荐的外部景点数据，我查到：")).toBeVisible();
+  await page.getByRole("button", { name: "显示调试信息" }).last().click();
   await expect(page.getByText("Dynamic RAG").first()).toBeVisible();
   await expect(page.getByText("西湖").first()).toBeVisible();
 });
@@ -64,6 +68,8 @@ test("keeps the demo controls usable on mobile viewport", async ({ page }) => {
   await page.getByRole("button", { name: "发送" }).click();
 
   await expect(page.getByText("已为您规划郑州到杭州的3天旅行方案")).toBeVisible();
+  await expect(page.getByText("Execution Trace").first()).toHaveCount(0);
+  await page.getByRole("button", { name: "显示调试信息" }).first().click();
   await expect(page.getByText("Execution Trace").first()).toBeVisible();
 });
 

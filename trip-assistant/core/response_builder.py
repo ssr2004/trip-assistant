@@ -47,6 +47,8 @@ class ResponseBuilder:
             return self._format_weather_response(task_results)
         if intent_type == "flight_search":
             return self._format_single_tool_response("航班推荐", task_results, "search_flights")
+        if intent_type == "train_search":
+            return self._format_single_tool_response("火车推荐", task_results, "search_trains")
         if intent_type == "hotel_search":
             return self._format_single_tool_response("酒店推荐", task_results, "search_hotels")
         if intent_type == "attraction_search":
@@ -115,42 +117,49 @@ class ResponseBuilder:
             preferences,
             memory_note,
         ))
+        section_index = 2
+
+        def next_section_title(title: str) -> str:
+            nonlocal section_index
+            label = f"{self._chinese_section_number(section_index)}、{title}"
+            section_index += 1
+            return label
+
+        trains_result = self._find_result_by_tool(task_results, "search_trains")
+        trains = self._tool_items(trains_result, "trains") if trains_result else []
+        if trains:
+            lines.extend(self._format_trains(trains, section_title=next_section_title("火车/高铁推荐")))
 
         flights_result = self._find_result_by_tool(task_results, "search_flights")
         flight_data = self._result_data(flights_result) if flights_result else {}
         airport_guidance = flight_data.get("airport_guidance") if isinstance(flight_data, dict) else None
         if airport_guidance:
-            lines.extend(self._format_airport_guidance(airport_guidance, section_title="二、机场与出行衔接建议"))
+            lines.extend(self._format_airport_guidance(airport_guidance, section_title=next_section_title("机场与出行衔接建议")))
 
         hotels_result = self._find_result_by_tool(task_results, "search_hotels")
         hotels = self._tool_items(hotels_result, "hotels") if hotels_result else []
         if hotels:
-            lines.extend(self._format_hotels(hotels, section_title="三、酒店推荐"))
+            lines.extend(self._format_hotels(hotels, section_title=next_section_title("酒店推荐")))
 
         attractions_result = self._find_result_by_tool(task_results, "search_attractions")
         attractions = self._tool_items(attractions_result, "attractions") if attractions_result else []
         attraction_sources = self._tool_items(attractions_result, "rag_documents") if attractions_result else []
         if attractions:
-            lines.extend(self._format_attractions(attractions, section_title="四、景点推荐", sources=attraction_sources))
+            lines.extend(self._format_attractions(attractions, section_title=next_section_title("景点推荐"), sources=attraction_sources))
 
         itinerary = itinerary_data.get("itinerary", [])
         if itinerary:
-            lines.extend(self._format_itinerary(itinerary, section_title="五、每日行程"))
+            lines.extend(self._format_itinerary(itinerary, section_title=next_section_title("每日行程")))
 
         budget_summary = itinerary_data.get("budget_summary")
         if budget_summary:
-            lines.extend(self._format_budget(budget_summary, section_title="六、预算估算"))
-
-        guide_result = self._find_result_by_tool(task_results, "retrieve_guide")
-        guide_data = self._result_data(guide_result) if guide_result else {}
-        if guide_data:
-            lines.extend(self._format_guide(guide_data, section_title="七、攻略与注意事项"))
+            lines.extend(self._format_budget(budget_summary, section_title=next_section_title("预算估算")))
 
         error_lines = self._format_errors(task_results)
         if error_lines:
-            lines.extend(["", "八、执行提示", *error_lines])
+            lines.extend(["", next_section_title("执行提示"), *error_lines])
 
-        lines.append("\n数据说明：酒店和机场只展示真实POI或明确失败提示；当前不生成航班号、票价、舱位、余票、酒店房态、房型或可订价格。")
+        lines.append("\n数据说明：火车/高铁只展示12306 MCP返回的真实结果；机场和酒店只展示真实POI或明确失败提示；当前不生成航班号、舱位、余票、酒店房态、房型或可订价格。")
         return "\n".join(lines)
 
     def _format_policy_response(self, task_results: List[Dict]) -> str:
@@ -284,6 +293,9 @@ class ResponseBuilder:
             if guidance:
                 return "\n".join(["为您找到以下真实机场POI与出行衔接建议：", *self._format_airport_guidance(guidance, section_title=None)])
             return "暂未查询到真实机场POI结果；在没有真实航班数据源时，不生成航班号、票价、舱位或余票推荐。"
+        if tool_name == "search_trains":
+            trains = self._tool_items(result, "trains")
+            return "\n".join([f"为您找到以下{title}：", *self._format_trains(trains, section_title=None)])
         if tool_name == "search_hotels":
             hotels = self._tool_items(result, "hotels")
             return "\n".join([f"为您找到以下{title}：", *self._format_hotels(hotels, section_title=None)])
@@ -402,6 +414,54 @@ class ResponseBuilder:
         lines.append("当前未接入真实航班库存API，不展示航班号、票价、舱位或余票。")
         return lines
 
+    def _format_trains(self, trains: List[Dict], section_title: Optional[str]) -> List[str]:
+        """格式化12306 MCP火车/高铁结果。"""
+        lines = ["", section_title] if section_title else []
+        for index, train in enumerate((trains or [])[:5], start=1):
+            seats = train.get("seats") or {}
+            seat_summary = self._format_train_seats(seats)
+            lines.append(
+                f"{index}. {train.get('train_code', '车次待定')}："
+                f"{train.get('from_station', '出发站')} -> {train.get('to_station', '到达站')}，"
+                f"{train.get('departure_time', '出发时间待定')} - {train.get('arrival_time', '到达时间待定')}，"
+                f"历时{train.get('duration', '待定')}{seat_summary}。来源：12306 MCP。"
+            )
+        if not trains:
+            lines.append("暂未查询到真实12306车次，不使用mock补全。")
+        return lines
+
+    def _format_train_seats(self, seats: Dict) -> str:
+        if not isinstance(seats, dict) or not seats:
+            return ""
+        labels = {
+            "business": "商务座",
+            "first_class": "一等座",
+            "second_class": "二等座",
+            "hard_sleeper": "硬卧",
+            "hard_seat": "硬座",
+            "no_seat": "无座",
+            "price": "票价",
+        }
+        parts = []
+        for key, label in labels.items():
+            value = seats.get(key)
+            if value not in (None, "", "--"):
+                parts.append(self._format_seat_value(label, value))
+        return f"，席别/票价：{'，'.join(parts[:4])}" if parts else ""
+
+    def _format_seat_value(self, label: str, value: Any) -> str:
+        if isinstance(value, dict):
+            formatted = []
+            for seat_name, price in value.items():
+                if price in (None, "", "--"):
+                    continue
+                price_text = str(price)
+                if price_text.replace(".", "", 1).isdigit():
+                    price_text = f"{price_text}元"
+                formatted.append(f"{seat_name}{price_text}")
+            return "票价" + "、".join(formatted[:4]) if formatted else label
+        return f"{label}{value}"
+
     def _format_airport_guidance(self, guidance: Dict, section_title: Optional[str]) -> List[str]:
         """格式化真实机场POI与出行衔接建议，不展示航班库存字段。"""
         lines = ["", section_title] if section_title else []
@@ -446,6 +506,8 @@ class ResponseBuilder:
                 f"{index}. {hotel.get('name', '酒店')}：{hotel.get('address', '地址待高德补充')}，"
                 f"评分{rating}{telephone_text}。来源：{hotel.get('source', 'amap')} POI。"
             )
+            if hotel.get("selection_reason"):
+                lines.append(f"   推荐依据：{hotel['selection_reason']}。")
         return lines
 
     def _format_attractions(
@@ -483,30 +545,62 @@ class ResponseBuilder:
     def _format_budget(self, budget_summary: Dict, section_title: str) -> List[str]:
         """格式化预算估算"""
         lines = ["", section_title]
+        price_confidence = budget_summary.get("price_confidence") or "rough_template"
+        estimation_basis = budget_summary.get("estimation_basis")
+        if estimation_basis:
+            lines.append(f"- 估算依据：{estimation_basis}。")
+        if price_confidence != "real_price_partial":
+            lines.append("- 可信度说明：当前缺少足够真实价格字段，以下金额是模板粗略参考，不作为实时报价。")
+        else:
+            lines.append(f"- 可信度说明：已纳入{budget_summary.get('price_source_count', 0)}个真实价格字段，但仍不代表可预订总价。")
         input_budget = budget_summary.get("input_budget")
         if input_budget:
             lines.append(f"- 用户预算：约{input_budget:g}元")
-        lines.append(f"- 住宿估算：约{budget_summary.get('estimated_hotel', 0):g}元")
-        lines.append(f"- 餐饮估算：约{budget_summary.get('estimated_food', 0):g}元")
-        lines.append(f"- 市内交通估算：约{budget_summary.get('estimated_local_transport', 0):g}元")
-        lines.append(f"- 景点门票估算：约{budget_summary.get('estimated_attractions', 0):g}元")
-        lines.append(f"- 不含机票合计：约{budget_summary.get('estimated_total_without_flight', 0):g}元")
+        label = "粗略参考" if price_confidence != "real_price_partial" else "估算"
+        lines.append(f"- 住宿{label}：约{budget_summary.get('estimated_hotel', 0):g}元")
+        lines.append(f"- 餐饮{label}：约{budget_summary.get('estimated_food', 0):g}元")
+        lines.append(f"- 市内交通{label}：约{budget_summary.get('estimated_local_transport', 0):g}元")
+        lines.append(f"- 景点门票{label}：约{budget_summary.get('estimated_attractions', 0):g}元")
+        lines.append(f"- 不含航班的{label}合计：约{budget_summary.get('estimated_total_without_flight', 0):g}元")
         if budget_summary.get("budget_note"):
             lines.append(f"- 预算建议：{budget_summary['budget_note']}")
         return lines
 
     def _format_guide(self, guide_data: Dict, section_title: str) -> List[str]:
-        """格式化攻略信息"""
+        """格式化攻略规划依据，不直接展示RAG原文。"""
         lines = ["", section_title]
-        answer = guide_data.get("answer")
-        if answer:
-            lines.append(self._compact_multiline(answer, max_lines=8))
+        insights = guide_data.get("planning_insights") or {}
+        decision_basis = insights.get("decision_basis") or []
+        highlights = insights.get("highlights") or []
+        route_hints = insights.get("route_hints") or []
+        food_hints = insights.get("food_hints") or []
+        lodging_hints = insights.get("lodging_hints") or []
+        caution_hints = insights.get("caution_hints") or []
 
-        sources = guide_data.get("sources") or []
-        if sources:
+        if highlights:
+            lines.append(f"- 规划采用的攻略要点：{self._join_limited(highlights, 6)}。")
+        for item in decision_basis[:3]:
+            lines.append(f"- 规划决策：{item}。")
+        if route_hints:
+            lines.append(f"- 路线参考：{self._compact_sentence(route_hints[0])}")
+        if food_hints:
+            lines.append(f"- 餐饮线索：{self._compact_sentence(food_hints[0])}")
+        if lodging_hints:
+            lines.append(f"- 住宿区域参考：{self._compact_sentence(lodging_hints[0])}")
+        if caution_hints:
+            lines.append(f"- 注意事项：{self._compact_sentence(caution_hints[0])}")
+
+        source_briefs = insights.get("source_briefs") or []
+        if source_briefs:
             lines.append("资料来源：")
-            for source in sources[:3]:
+            for source in source_briefs[:3]:
                 lines.append(self._format_source_reference(source, "本地攻略文档"))
+        elif guide_data.get("sources"):
+            lines.append("资料来源：")
+            for source in (guide_data.get("sources") or [])[:3]:
+                lines.append(self._format_source_reference(source, "本地攻略文档"))
+        if len(lines) == 2:
+            lines.append("- 暂未提取到可用于规划的稳定攻略要点，已优先使用真实POI和交通工具结果。")
         return lines
 
     def _format_errors(self, task_results: List[Dict]) -> List[str]:
@@ -517,11 +611,20 @@ class ResponseBuilder:
                 raw_result = result.get("result")
                 if isinstance(raw_result, dict) and raw_result.get("success") is False:
                     task = result.get("task", {})
-                    lines.append(f"- {task.get('name', '任务')}：{raw_result.get('error', '工具返回失败')}。")
+                    lines.append(f"- {task.get('name', '任务')}：{self._friendly_error(raw_result.get('error', '工具返回失败'))}。")
                 continue
             task = result.get("task", {})
-            lines.append(f"- {task.get('name', '任务')}：{result.get('error', '执行失败')}。")
+            lines.append(f"- {task.get('name', '任务')}：{self._friendly_error(result.get('error', '执行失败'))}。")
         return lines
+
+    def _friendly_error(self, error: Any) -> str:
+        message = str(error or "")
+        lower = message.lower()
+        if "pywintypes" in lower or "no module named" in lower:
+            return "本地MCP运行环境异常，已跳过该真实数据源；可配置远程SSE MCP或修复本地依赖后重试"
+        if "mcp server未启用" in lower or "mcp_unavailable" in lower:
+            return "真实MCP数据源当前不可用，已跳过该项"
+        return message
 
     def _find_result_by_task_type(self, task_results: List[Dict], task_type: str) -> Optional[Dict]:
         """按任务类型查找结果"""
@@ -571,6 +674,21 @@ class ResponseBuilder:
         }
         return labels.get(slot, slot)
 
+    def _chinese_section_number(self, value: int) -> str:
+        labels = {
+            1: "一",
+            2: "二",
+            3: "三",
+            4: "四",
+            5: "五",
+            6: "六",
+            7: "七",
+            8: "八",
+            9: "九",
+            10: "十",
+        }
+        return labels.get(value, str(value))
+
     def _clean_time(self, value: Any) -> str:
         """清理模拟数据中的空日期展示"""
         if value is None:
@@ -603,3 +721,13 @@ class ResponseBuilder:
         if len(lines) <= max_lines:
             return "\n".join(lines)
         return "\n".join(lines[:max_lines] + ["……"])
+
+    def _join_limited(self, items: List[Any], limit: int) -> str:
+        values = [str(item).strip() for item in items if str(item).strip()]
+        return "、".join(values[:limit])
+
+    def _compact_sentence(self, text: Any, max_chars: int = 90) -> str:
+        value = " ".join(str(text or "").split())
+        if len(value) <= max_chars:
+            return value
+        return value[:max_chars].rstrip() + "……"

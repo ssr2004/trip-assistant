@@ -8,6 +8,7 @@ from core.cache import ExternalAPICache
 from tools.registry import ToolRegistry
 from tools.flights import FlightTool
 from tools.hotels import HotelTool
+from tools.trains import TrainTool
 from tools.attractions import AttractionTool
 from tools.policy import PolicyTool
 from tools.guide import GuideTool
@@ -23,6 +24,20 @@ class FakeAMapResponse:
 
     def json(self):
         return self.payload
+
+
+class FakeMCPClient:
+    def __init__(self, result):
+        self.result = result
+        self.last_tool_name = None
+        self.last_arguments = None
+        self.calls = []
+
+    async def call_tool(self, tool_name, arguments):
+        self.last_tool_name = tool_name
+        self.last_arguments = arguments
+        self.calls.append((tool_name, arguments))
+        return self.result
 
 
 def fake_amap_request(pois_by_city):
@@ -151,6 +166,88 @@ async def test_hotel_tool_returns_standard_result():
 
 
 @pytest.mark.asyncio
+async def test_hotel_tool_prefers_amap_mcp_result_when_available():
+    """酒店工具优先使用高德MCP真实搜索结果，且不补模拟库存字段"""
+    mcp_client = FakeMCPClient({
+        "success": True,
+        "data": {
+            "pois": [
+                {
+                    "id": "mcp-hotel-1",
+                    "name": "杭州城中香格里拉",
+                    "type": "住宿服务;宾馆酒店;五星级宾馆",
+                    "address": "杭州市拱墅区长寿路6号",
+                    "cityname": "杭州市",
+                    "adname": "拱墅区",
+                    "tel": "0571-87977999",
+                    "biz_ext": {"rating": "4.7", "cost": "1280"},
+                }
+            ]
+        },
+        "error": None,
+        "metadata": {"provider": "mcp_amap", "api_status": "success", "execution_mode": "real_mcp"},
+    })
+    tool = HotelTool(
+        amap_client=amap_test_client({"杭州": []}),
+        mcp_client=mcp_client,
+    )
+
+    result = await tool.execute(location="杭州", preferences=["西湖附近"])
+
+    assert result["success"] is True
+    assert result["metadata"]["source"] == "mcp_amap_hotel_search"
+    assert result["metadata"]["provider"] == "mcp_amap"
+    assert result["metadata"]["mock"] is False
+    assert mcp_client.last_tool_name == "maps_text_search"
+    assert mcp_client.last_arguments["city"] == "杭州"
+    assert mcp_client.last_arguments["types"] == "100000"
+    assert "酒店" in mcp_client.last_arguments["keywords"]
+    hotel = result["data"]["hotels"][0]
+    assert hotel["name"] == "杭州城中香格里拉"
+    assert hotel["source"] == "mcp_amap"
+    assert hotel["price"] == "1280"
+    assert "price_per_night" not in hotel
+    assert "room_type" not in hotel
+    assert "availability" not in hotel
+
+
+@pytest.mark.asyncio
+async def test_hotel_tool_ranks_core_city_hotels_above_remote_counties():
+    """酒店推荐应优先展示目的地核心城区和高相关酒店"""
+    tool = HotelTool(amap_client=amap_test_client({
+        "烟台": [
+            {
+                "id": "remote-hotel",
+                "name": "莱州大成宾馆",
+                "type": "住宿服务;宾馆酒店;宾馆",
+                "address": "土山镇",
+                "cityname": "烟台市",
+                "adname": "莱州市",
+                "biz_ext": {"rating": "5.0"},
+            },
+            {
+                "id": "core-hotel",
+                "name": "烟台中心假日酒店",
+                "type": "住宿服务;宾馆酒店;四星级宾馆",
+                "address": "烟台市芝罘区南大街",
+                "cityname": "烟台市",
+                "adname": "芝罘区",
+                "tel": "0535-1234567",
+                "biz_ext": {"rating": "4.7"},
+            },
+        ]
+    }))
+
+    result = await tool.execute(location="烟台")
+
+    assert result["success"] is True
+    hotels = result["data"]["hotels"]
+    assert hotels[0]["name"] == "烟台中心假日酒店"
+    assert hotels[0]["rank"] == 1
+    assert "核心城区" in hotels[0]["selection_reason"]
+
+
+@pytest.mark.asyncio
 async def test_hotel_tool_without_real_provider_does_not_mock():
     """没有真实酒店POI数据源时不返回模拟酒店"""
     tool = HotelTool()
@@ -173,6 +270,66 @@ async def test_hotel_tool_handles_missing_location():
     assert result["success"] is False
     assert result["data"]["hotels"] == []
     assert "目的地" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_train_tool_returns_real_mcp_ticket_result():
+    """火车工具通过12306 MCP结果返回真实车次结构"""
+    mcp_client = FakeMCPClient({
+        "success": True,
+        "data": {
+            "trains": [
+                {
+                    "train_code": "G1964",
+                    "from_station_name": "郑州东",
+                    "to_station_name": "杭州东",
+                    "start_time": "07:12",
+                    "arrive_time": "12:35",
+                    "lishi": "05:23",
+                    "ze_num": "有",
+                    "zy_num": "12",
+                }
+            ]
+        },
+        "error": None,
+        "metadata": {"provider": "mcp_12306", "api_status": "success", "execution_mode": "real_mcp"},
+    })
+    tool = TrainTool(mcp_client=mcp_client)
+
+    result = await tool.execute(origin="郑州", destination="杭州", date="2026-06-10")
+
+    assert result["success"] is True
+    assert result["metadata"]["source"] == "mcp_12306"
+    assert result["metadata"]["mock"] is False
+    assert result["metadata"]["real_inventory"] is True
+    called_tools = [tool_name for tool_name, _ in mcp_client.calls]
+    assert "search-stations" in called_tools
+    assert "query-tickets" in called_tools
+    assert "query-ticket-price" in called_tools
+    query_ticket_args = next(arguments for tool_name, arguments in mcp_client.calls if tool_name == "query-tickets")
+    assert query_ticket_args == {
+        "from_station": "郑州",
+        "to_station": "杭州",
+        "train_date": "2026-06-10",
+    }
+    train = result["data"]["trains"][0]
+    assert train["train_code"] == "G1964"
+    assert train["from_station"] == "郑州东"
+    assert train["to_station"] == "杭州东"
+    assert train["seats"]["second_class"] == "有"
+
+
+@pytest.mark.asyncio
+async def test_train_tool_requires_date_and_does_not_mock():
+    """没有日期时不调用真实12306，也不返回模拟车次"""
+    tool = TrainTool(mcp_client=FakeMCPClient({"success": True, "data": {"trains": []}}))
+
+    result = await tool.execute(origin="郑州", destination="杭州")
+
+    assert result["success"] is False
+    assert result["data"]["trains"] == []
+    assert result["metadata"]["mock"] is False
+    assert result["metadata"]["error_type"] == "missing_date"
 
 
 @pytest.mark.asyncio
@@ -251,6 +408,37 @@ async def test_itinerary_tool_generates_itinerary():
 
 
 @pytest.mark.asyncio
+async def test_itinerary_tool_uses_guide_planning_insights():
+    """行程工具应消费攻略信号生成更具体的每日安排，而不是输出泛化模板。"""
+    tool = ItineraryTool()
+
+    result = await tool.execute(
+        origin="太原",
+        destination="郑州",
+        duration=3,
+        context={
+            "guide": {
+                "planning_insights": {
+                    "highlights": ["河南博物院", "二七纪念塔", "少林寺"],
+                    "route_hints": ["河南博物院和二七纪念塔适合安排在市区一天。"],
+                    "food_hints": ["二七广场附近餐饮集中。"],
+                    "caution_hints": ["热门景点建议提前预约门票。"],
+                }
+            }
+        },
+    )
+
+    assert result["success"] is True
+    itinerary = result["data"]["itinerary"]
+    flattened = " ".join(" ".join(day["activities"]) + day["notes"] for day in itinerary)
+    assert "河南博物院" in flattened
+    assert "二七纪念塔" in flattened
+    assert "少林寺" in flattened
+    assert "热门景点建议提前预约门票" in flattened
+    assert result["data"]["context_summary"]["has_guide"] is True
+
+
+@pytest.mark.asyncio
 async def test_itinerary_tool_applies_memory_profile_constraints():
     """行程工具会消费长期记忆画像并输出个性化摘要。"""
     tool = ItineraryTool()
@@ -286,8 +474,10 @@ async def test_registry_executes_new_tools():
     assert "generate_itinerary" in tools
     assert "optimize_route_order" in tools
     assert "get_weather_forecast" in tools
+    assert "search_trains" in tools
 
     flight_result = await registry.execute("search_flights", {"origin": "郑州", "destination": "杭州"})
+    train_result = await registry.execute("search_trains", {"origin": "郑州", "destination": "杭州", "date": "2026-06-10"})
     hotel_result = await registry.execute("search_hotels", {"location": "杭州"})
     attraction_result = await registry.execute("search_attractions", {"location": "杭州"})
     policy_result = await registry.execute("retrieve_policy", {"query": "机票能退吗"})
@@ -297,6 +487,9 @@ async def test_registry_executes_new_tools():
 
     assert flight_result["success"] is False
     assert flight_result["metadata"]["mock"] is False
+    assert train_result["success"] is False
+    assert train_result["metadata"]["mock"] is False
+    assert train_result["data"]["trains"] == []
     assert hotel_result["success"] is False
     assert hotel_result["metadata"]["mock"] is False
     assert attraction_result["success"] is True

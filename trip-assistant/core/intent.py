@@ -20,10 +20,16 @@ class IntentParser:
     FALLBACK_CONFIDENCE_THRESHOLD = 0.55
 
     CITIES = [
-        "北京", "上海", "广州", "深圳", "成都", "杭州", "西安", "重庆",
+        "北京", "上海", "广州", "深圳", "成都", "杭州", "西安", "重庆", "太原",
         "郑州", "武汉", "长沙", "南京", "苏州", "厦门", "青岛", "大连",
         "三亚", "昆明", "大理", "丽江", "桂林", "贵阳", "哈尔滨",
         "天津", "沈阳", "济南", "福州", "南昌", "合肥", "宁波", "无锡",
+        "烟台", "威海", "洛阳", "开封", "扬州", "常州", "绍兴", "嘉兴",
+        "温州", "台州", "金华", "南宁", "珠海", "佛山", "东莞", "惠州",
+        "拉萨", "西藏", "新疆", "内蒙古", "广西", "云南", "贵州", "四川",
+        "青海", "甘肃", "宁夏", "海南", "福建", "浙江", "江苏", "广东",
+        "河南", "河北", "山东", "山西", "陕西", "湖南", "湖北", "安徽",
+        "江西", "辽宁", "吉林", "黑龙江",
     ]
 
     CHINESE_NUMBERS = {
@@ -44,6 +50,7 @@ class IntentParser:
     REQUIRED_SLOTS = {
         "travel_plan": ["origin", "destination", "departure_date", "duration"],
         "flight_search": ["origin", "destination"],
+        "train_search": ["origin", "destination", "departure_date"],
         "hotel_search": ["destination"],
         "attraction_search": ["destination"],
         "policy_query": [],
@@ -125,6 +132,9 @@ class IntentParser:
 
         if self._is_dynamic_knowledge_query(text):
             return "dynamic_knowledge_query"
+
+        if any(keyword in text for keyword in ["火车", "高铁", "动车", "列车", "12306", "车票"]):
+            return "train_search"
 
         if any(keyword in text for keyword in ["航班", "飞机", "机票"]):
             return "flight_search"
@@ -365,7 +375,7 @@ class IntentParser:
                     content=(
                         "请解析下面的旅行需求，并返回严格JSON。\n"
                         "JSON字段必须包含：intent、entities、confidence、missing_slots、followup_question。\n"
-                        "intent只能是 travel_plan、flight_search、hotel_search、attraction_search、policy_query、guide_query、dynamic_knowledge_query、itinerary_revision、weather_query、general_chat。\n"
+                        "intent只能是 travel_plan、flight_search、train_search、hotel_search、attraction_search、policy_query、guide_query、dynamic_knowledge_query、itinerary_revision、weather_query、general_chat。\n"
                         "entities必须包含 origin、destination、departure_date、return_date、duration、budget、travelers、preferences。\n"
                         f"用户输入：{user_input}\n"
                         f"规则解析结果：{json.dumps(rule_result, ensure_ascii=False)}"
@@ -392,7 +402,7 @@ class IntentParser:
             repair_instructions=(
                 "Return a JSON object with fields: intent, entities, confidence, "
                 "missing_slots, followup_question. intent must be one of: "
-                "travel_plan, flight_search, hotel_search, attraction_search, "
+                "travel_plan, flight_search, train_search, hotel_search, attraction_search, "
                 "policy_query, guide_query, dynamic_knowledge_query, itinerary_revision, "
                 "weather_query, general_chat. entities must include: origin, destination, "
                 "departure_date, return_date, duration, budget, travelers, preferences."
@@ -427,7 +437,7 @@ class IntentParser:
                 **self._build_llm_runtime_metadata(response.metadata, structured_result),
             }
             return None
-        result = self._normalize_llm_intent(validated)
+        result = self._merge_rule_entities(self._normalize_llm_intent(validated), rule_result)
         result["metadata"] = {
             "source": "llm",
             "llm_model": response.metadata.get("model"),
@@ -440,6 +450,21 @@ class IntentParser:
             **self._build_llm_runtime_metadata(response.metadata, structured_result),
         }
         return result
+
+    def _merge_rule_entities(self, llm_result: Dict, rule_result: Dict) -> Dict:
+        """Keep deterministic route entities when LLM fallback omits them."""
+        entities = dict(llm_result.get("entities", {}) or {})
+        rule_entities = rule_result.get("entities", {}) or {}
+        for field in ["origin", "destination", "departure_date", "return_date", "duration", "budget", "travelers"]:
+            if not entities.get(field) and rule_entities.get(field):
+                entities[field] = rule_entities[field]
+        if not entities.get("preferences") and rule_entities.get("preferences"):
+            entities["preferences"] = rule_entities["preferences"]
+        llm_result["entities"] = entities
+        missing_slots = self._detect_missing_slots(llm_result.get("intent"), entities)
+        llm_result["missing_slots"] = missing_slots
+        llm_result["followup_question"] = self._build_followup_question(missing_slots, entities)
+        return llm_result
 
     def _build_llm_runtime_metadata(
         self,

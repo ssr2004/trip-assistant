@@ -41,6 +41,7 @@ class TravelAgent:
         self.dynamic_rag_store = DynamicRAGStore()
         self.dynamic_rag_stores = {"default": self.dynamic_rag_store}
         self.session_itinerary_contexts = {}
+        self.session_pending_intents = {}
         self.tool_registry = ToolRegistry()
         self.response_builder = ResponseBuilder()
         self.session_history_store = SessionHistoryStore()
@@ -75,6 +76,8 @@ class TravelAgent:
         """解析用户意图"""
         message = state["messages"][-1].content
         intent = await self.intent_parser.parse_async(message)
+        session_id = state.get("session_id", "default")
+        intent = self._merge_pending_intent(session_id, intent)
         return {"intent": intent}
 
     async def _retrieve_context(self, state: AgentState) -> Dict:
@@ -92,6 +95,92 @@ class TravelAgent:
             "rag_context": rag_results,
             "memory_context": memory_context,
         }
+
+    def _merge_pending_intent(self, session_id: str, current_intent: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge slot-filling replies with the latest pending travel intent in the same session."""
+        key = session_id or "default"
+        current_intent = dict(current_intent or {})
+        current_entities = dict(current_intent.get("entities") or {})
+        current_type = current_intent.get("intent") or "general_chat"
+        pending = self.session_pending_intents.get(key)
+
+        if pending and self._should_merge_pending_intent(current_intent, pending):
+            pending_entities = dict(pending.get("entities") or {})
+            merged_entities = dict(pending_entities)
+            for field, value in current_entities.items():
+                if self._has_entity_value(value):
+                    if field == "preferences":
+                        merged_entities[field] = self._merge_preferences(
+                            pending_entities.get(field, []),
+                            value,
+                        )
+                    else:
+                        merged_entities[field] = value
+
+            merged_intent_type = current_type if current_type != "general_chat" else pending.get("intent", "travel_plan")
+            missing_slots = self.intent_parser._detect_missing_slots(merged_intent_type, merged_entities)
+            merged_intent = {
+                **pending,
+                **current_intent,
+                "intent": merged_intent_type,
+                "entities": merged_entities,
+                "missing_slots": missing_slots,
+                "followup_question": self.intent_parser._build_followup_question(missing_slots, merged_entities),
+                "confidence": self.intent_parser._calculate_confidence(merged_intent_type, merged_entities, missing_slots),
+                "metadata": {
+                    **(pending.get("metadata") or {}),
+                    **(current_intent.get("metadata") or {}),
+                    "context_merge": True,
+                    "context_source": "session_pending_intent",
+                    "merged_from_intent": pending.get("intent"),
+                },
+            }
+            self._update_pending_intent(key, merged_intent)
+            return merged_intent
+
+        self._update_pending_intent(key, current_intent)
+        return current_intent
+
+    def _should_merge_pending_intent(self, current_intent: Dict[str, Any], pending: Dict[str, Any]) -> bool:
+        """Return whether current message should fill or correct the pending travel context."""
+        current_type = current_intent.get("intent") or "general_chat"
+        pending_type = pending.get("intent") or "general_chat"
+        if pending_type not in self._contextual_intent_types():
+            return False
+        if current_type in {"policy_query", "dynamic_knowledge_query", "itinerary_revision"}:
+            return False
+        if current_type in self._contextual_intent_types() or current_type == "general_chat":
+            return True
+        return False
+
+    def _update_pending_intent(self, session_key: str, intent: Dict[str, Any]) -> None:
+        """Store only contextual intents that may be continued by a later user turn."""
+        intent_type = (intent or {}).get("intent")
+        if intent_type not in self._contextual_intent_types():
+            return
+        entities = (intent or {}).get("entities") or {}
+        if not any(self._has_entity_value(value) for value in entities.values()):
+            return
+        self.session_pending_intents[session_key] = {
+            **intent,
+            "entities": dict(entities),
+            "missing_slots": list(intent.get("missing_slots") or []),
+        }
+
+    def _contextual_intent_types(self) -> set[str]:
+        return {"travel_plan", "flight_search", "hotel_search", "attraction_search", "guide_query", "weather_query"}
+
+    def _has_entity_value(self, value: Any) -> bool:
+        if isinstance(value, list):
+            return bool(value)
+        return value is not None and value != ""
+
+    def _merge_preferences(self, previous: Any, current: Any) -> List[str]:
+        merged = []
+        for value in list(previous or []) + list(current or []):
+            if value and value not in merged:
+                merged.append(value)
+        return merged
 
     async def _plan_tasks(self, state: AgentState) -> Dict:
         """规划执行任务"""
@@ -1101,6 +1190,7 @@ class TravelAgent:
         """Build normalized dependency context for downstream tool tasks."""
         context = {
             "flights": [],
+            "trains": [],
             "hotels": [],
             "attractions": [],
             "guide": None,
@@ -1142,6 +1232,8 @@ class TravelAgent:
 
             if tool_name == "search_flights":
                 context["flights"] = self._safe_list(data, "flights")
+            elif tool_name == "search_trains":
+                context["trains"] = self._safe_list(data, "trains")
             elif tool_name == "search_hotels":
                 context["hotels"] = self._safe_list(data, "hotels")
             elif tool_name == "search_attractions":
@@ -1160,6 +1252,8 @@ class TravelAgent:
         keys = []
         if context.get("flights"):
             keys.append("flights")
+        if context.get("trains"):
+            keys.append("trains")
         if context.get("hotels"):
             keys.append("hotels")
         if context.get("attractions"):
@@ -1574,6 +1668,8 @@ class TravelAgent:
         if isinstance(data, dict):
             if data.get("itinerary"):
                 return f"itinerary_days={len(data.get('itinerary') or [])}"
+            if data.get("trains"):
+                return f"trains={len(data.get('trains') or [])}"
             if data.get("forecasts"):
                 return f"forecasts={len(data.get('forecasts') or [])}"
             if data.get("attractions"):
@@ -1719,4 +1815,5 @@ class TravelAgent:
         key = session_id or "default"
         self.dynamic_rag_stores.pop(key, None)
         self.session_itinerary_contexts.pop(key, None)
+        self.session_pending_intents.pop(key, None)
         self.session_history_store.clear_session(key)

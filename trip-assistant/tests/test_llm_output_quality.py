@@ -159,7 +159,7 @@ async def test_planner_llm_quality_failure_falls_back_to_template():
 
     tasks = await planner.plan_async(_complex_intent(), {"query": "复杂杭州三天规划，同时兼顾预算、路线、酒店和美食"})
 
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert planner.last_plan_metadata["planner_mode"] == "template"
     assert planner.last_plan_metadata["fallback_reason"] == "quality_gate_failed"
     assert planner.last_plan_metadata["llm_output_quality_passed"] is False

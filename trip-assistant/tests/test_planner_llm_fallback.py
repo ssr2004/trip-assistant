@@ -58,7 +58,7 @@ async def test_plan_async_can_force_template_with_mode_off():
 
     tasks = await planner.plan_async(_complex_intent(), _complex_context())
 
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert tasks[-1]["tool"] == "generate_itinerary"
     assert llm_client.calls == 0
     assert planner.last_plan_metadata["planner_mode"] == "template"
@@ -86,7 +86,7 @@ async def test_plan_async_auto_routes_simple_request_to_template():
 
     tasks = await planner.plan_async(intent, {"query": "郑州去杭州三天"})
 
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert llm_client.calls == 0
     assert planner.last_plan_metadata["planner_mode_config"] == "auto"
     assert planner.last_plan_metadata["llm_planner_enabled"] is True
@@ -102,8 +102,9 @@ async def test_plan_async_falls_back_when_llm_unavailable():
 
     tasks = await planner.plan_async(_complex_intent(), _complex_context())
 
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert "search_flights" in [task.get("tool") for task in tasks]
+    assert "search_trains" in [task.get("tool") for task in tasks]
     assert llm_client.calls == 0
 
 
@@ -201,7 +202,7 @@ async def test_plan_async_falls_back_when_llm_returns_invalid_json():
 
     tasks = await planner.plan_async(_complex_intent(), _complex_context())
 
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert tasks[-1]["tool"] == "generate_itinerary"
     assert llm_client.calls == 1
 
@@ -233,7 +234,7 @@ async def test_plan_async_falls_back_when_llm_uses_unknown_tool():
 
     tasks = await planner.plan_async(_complex_intent(), _complex_context())
 
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert "search_weather" not in [task.get("tool") for task in tasks]
     assert llm_client.calls == 1
     assert planner.last_plan_metadata["planner_mode"] == "template"
@@ -250,5 +251,5 @@ async def test_plan_async_falls_back_when_llm_schema_invalid():
 
     tasks = await planner.plan_async(_complex_intent(), _complex_context())
 
-    assert len(tasks) == 5
-    assert tasks[0]["tool"] == "search_flights"
+    assert len(tasks) == 6
+    assert tasks[0]["tool"] == "search_trains"

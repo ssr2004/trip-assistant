@@ -24,6 +24,7 @@ DEFAULT_ALLOWED_TASK_TYPES = {
 }
 DEFAULT_ALLOWED_TOOLS = {
     "search_flights",
+    "search_trains",
     "search_hotels",
     "search_attractions",
     "retrieve_policy",

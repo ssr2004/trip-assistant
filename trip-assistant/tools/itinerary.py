@@ -71,7 +71,7 @@ class ItineraryTool(BaseTool):
         context = context or {}
         context_summary = self._build_context_summary(context)
         personalization_summary = self._build_personalization_summary(memory_profile, preferences)
-        budget_summary = self._build_budget_summary(duration, budget, travelers)
+        budget_summary = self._build_budget_summary(duration, budget, travelers, context)
 
         llm_plan = None
         self.last_llm_metadata = {}
@@ -108,7 +108,7 @@ class ItineraryTool(BaseTool):
                 metadata_extra=self.last_llm_metadata,
             )
 
-        itinerary = self._build_itinerary(destination, duration, preferences, memory_profile)
+        itinerary = self._build_itinerary(destination, duration, preferences, memory_profile, context)
         return self._build_result(
             origin=origin,
             destination=destination,
@@ -242,6 +242,7 @@ class ItineraryTool(BaseTool):
     def _build_context_summary(self, context: Dict) -> Dict:
         """构建前置工具结果摘要，用于验证依赖注入和后续调试"""
         flights = context.get("flights") if isinstance(context, dict) else []
+        trains = context.get("trains") if isinstance(context, dict) else []
         hotels = context.get("hotels") if isinstance(context, dict) else []
         attractions = context.get("attractions") if isinstance(context, dict) else []
         guide = context.get("guide") if isinstance(context, dict) else None
@@ -251,6 +252,7 @@ class ItineraryTool(BaseTool):
 
         return {
             "flight_count": len(flights) if isinstance(flights, list) else 0,
+            "train_count": len(trains) if isinstance(trains, list) else 0,
             "hotel_count": len(hotels) if isinstance(hotels, list) else 0,
             "attraction_count": len(attractions) if isinstance(attractions, list) else 0,
             "has_guide": bool(guide),
@@ -265,6 +267,7 @@ class ItineraryTool(BaseTool):
             return "无"
 
         flights = context.get("flights") if isinstance(context.get("flights"), list) else []
+        trains = context.get("trains") if isinstance(context.get("trains"), list) else []
         hotels = context.get("hotels") if isinstance(context.get("hotels"), list) else []
         attractions = context.get("attractions") if isinstance(context.get("attractions"), list) else []
         weather = context.get("weather") if isinstance(context.get("weather"), dict) else None
@@ -272,6 +275,7 @@ class ItineraryTool(BaseTool):
 
         compact_context = {
             "flights": flights[:3],
+            "trains": trains[:3],
             "hotels": hotels[:3],
             "attractions": attractions[:5],
             "guide": context.get("guide"),
@@ -310,9 +314,18 @@ class ItineraryTool(BaseTool):
             return "无"
         return json.dumps(compact, ensure_ascii=False)
 
-    def _build_itinerary(self, destination: str, duration: int, preferences: List[str], memory_profile: Dict = None) -> List[Dict]:
+    def _build_itinerary(
+        self,
+        destination: str,
+        duration: int,
+        preferences: List[str],
+        memory_profile: Dict = None,
+        context: Dict = None,
+    ) -> List[Dict]:
         """构建每日行程"""
         memory_profile = memory_profile or {}
+        context = context or {}
+        guide_insights = self._guide_insights(context)
         if destination == "杭州":
             base_days = [
                 {
@@ -334,6 +347,8 @@ class ItineraryTool(BaseTool):
                     "notes": "根据返程时间选择宋城演出或轻松购物。",
                 },
             ]
+        elif guide_insights and guide_insights.get("highlights"):
+            base_days = self._build_guide_informed_days(destination, duration, guide_insights)
         else:
             base_days = [
                 {
@@ -381,35 +396,155 @@ class ItineraryTool(BaseTool):
             })
         return itinerary
 
-    def _build_budget_summary(self, duration: int, budget: float, travelers: int) -> Dict:
+    def _guide_insights(self, context: Dict) -> Dict:
+        guide = context.get("guide") if isinstance(context, dict) else None
+        if not isinstance(guide, dict):
+            return {}
+        insights = guide.get("planning_insights") or {}
+        return insights if isinstance(insights, dict) else {}
+
+    def _build_guide_informed_days(self, destination: str, duration: int, insights: Dict) -> List[Dict]:
+        highlights = [item for item in insights.get("highlights", []) if item]
+        route_hints = insights.get("route_hints") or []
+        food_hints = insights.get("food_hints") or []
+        caution_hints = insights.get("caution_hints") or []
+        days = []
+        day_count = max(int(duration or 3), 1)
+        chunks = self._distribute_highlights(highlights, day_count)
+
+        for index in range(day_count):
+            day = index + 1
+            activities = chunks[index] if index < len(chunks) else []
+            if day == 1:
+                activities = [f"抵达{destination}", *activities]
+            if day == day_count:
+                activities = [*activities, "整理返程"]
+            if not activities:
+                activities = [f"{destination}城市核心区游览", "品尝当地特色美食"]
+
+            notes = self._guide_day_note(day, route_hints, food_hints, caution_hints)
+            title = self._guide_day_title(destination, day, day_count, activities)
+            days.append({
+                "day": day,
+                "title": title,
+                "activities": activities,
+                "notes": notes,
+            })
+        return days
+
+    def _distribute_highlights(self, highlights: List[str], day_count: int) -> List[List[str]]:
+        cleaned = []
+        for item in highlights:
+            if item and item not in cleaned:
+                cleaned.append(item)
+        if not cleaned:
+            return [[] for _ in range(day_count)]
+        buckets = [[] for _ in range(day_count)]
+        for index, item in enumerate(cleaned[: max(day_count * 3, 3)]):
+            buckets[index % day_count].append(item)
+        return buckets
+
+    def _guide_day_title(self, destination: str, day: int, day_count: int, activities: List[str]) -> str:
+        if day == 1:
+            return f"抵达{destination}与核心景点"
+        if day == day_count:
+            return f"{destination}补充游览与返程"
+        primary = next((item for item in activities if item and not item.startswith("抵达")), destination)
+        return f"{primary}主题游览"
+
+    def _guide_day_note(
+        self,
+        day: int,
+        route_hints: List[str],
+        food_hints: List[str],
+        caution_hints: List[str],
+    ) -> str:
+        notes = ["根据攻略检索结果提取的景点和路线线索安排。"]
+        if day == 1 and food_hints:
+            notes.append(f"餐饮可参考：{food_hints[0]}")
+        if day == 2 and route_hints:
+            notes.append(f"路线参考：{route_hints[0]}")
+        if caution_hints:
+            notes.append(f"注意：{caution_hints[0]}")
+        return " ".join(notes)
+
+    def _build_budget_summary(self, duration: int, budget: float, travelers: int, context: Dict = None) -> Dict:
         """构建预算摘要"""
+        context = context or {}
         travelers = travelers or 1
         estimated_hotel = max(duration - 1, 1) * 600
         estimated_food = duration * 180 * travelers
         estimated_local_transport = duration * 80 * travelers
         estimated_attractions = duration * 120 * travelers
+        real_price_sources = self._collect_real_price_sources(context)
+        if real_price_sources.get("hotel_prices"):
+            estimated_hotel = sum(real_price_sources["hotel_prices"][: max(duration - 1, 1)])
+        if real_price_sources.get("attraction_prices"):
+            estimated_attractions = sum(real_price_sources["attraction_prices"][: max(duration * travelers, 1)])
         estimated_total_without_flight = (
             estimated_hotel + estimated_food + estimated_local_transport + estimated_attractions
         )
+        price_source_count = sum(len(values) for values in real_price_sources.values())
+        price_confidence = "real_price_partial" if price_source_count else "rough_template"
 
         return {
             "input_budget": budget,
             "travelers": travelers,
+            "price_confidence": price_confidence,
+            "price_source_count": price_source_count,
+            "estimation_basis": "真实价格字段 + 模板估算" if price_source_count else "缺少真实价格字段，以下仅为模板粗略参考",
             "estimated_hotel": estimated_hotel,
             "estimated_food": estimated_food,
             "estimated_local_transport": estimated_local_transport,
             "estimated_attractions": estimated_attractions,
             "estimated_total_without_flight": estimated_total_without_flight,
-            "budget_note": self._build_budget_note(budget, estimated_total_without_flight),
+            "budget_note": self._build_budget_note(budget, estimated_total_without_flight, price_confidence),
         }
 
-    def _build_budget_note(self, budget: float, estimated_total: float) -> str:
+    def _collect_real_price_sources(self, context: Dict) -> Dict[str, List[float]]:
+        """Collect numeric prices returned by real tools without inventing missing data."""
+        hotels = context.get("hotels") if isinstance(context, dict) else []
+        attractions = context.get("attractions") if isinstance(context, dict) else []
+        return {
+            "hotel_prices": self._numeric_prices(hotels, ["price", "cost"]),
+            "attraction_prices": self._numeric_prices(attractions, ["ticket_price", "price"]),
+        }
+
+    def _numeric_prices(self, items: List[Dict], keys: List[str]) -> List[float]:
+        prices = []
+        if not isinstance(items, list):
+            return prices
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in keys:
+                value = item.get(key)
+                number = self._parse_price(value)
+                if number is not None:
+                    prices.append(number)
+                    break
+        return prices
+
+    def _parse_price(self, value) -> Optional[float]:
+        if value in (None, "", "待定", "免费"):
+            return 0.0 if value == "免费" else None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+        import re
+
+        match = re.search(r"(\d+(?:\.\d+)?)", str(value))
+        return float(match.group(1)) if match else None
+
+    def _build_budget_note(self, budget: float, estimated_total: float, price_confidence: str) -> str:
         """生成预算说明"""
+        confidence_note = "当前缺少足够真实价格字段，金额仅作粗略参考。" if price_confidence == "rough_template" else "已纳入部分真实价格字段，仍不包含航班和实时酒店库存。"
         if budget is None:
-            return "用户未提供明确预算，当前为基础估算，后续可结合航班和酒店价格细化。"
+            return f"用户未提供明确预算，{confidence_note}"
         if budget >= estimated_total:
-            return "预算基本可以覆盖当地住宿、餐饮、交通和景点开销，机票费用需另行结合航班结果计算。"
-        return "预算可能偏紧，建议优先选择经济型酒店、免费景点和公共交通。"
+            return f"预算大致可以覆盖当地住宿、餐饮、交通和景点开销；{confidence_note}"
+        return f"预算可能偏紧，建议优先选择经济型酒店、免费景点和公共交通；{confidence_note}"
 
     def _build_summary(self, origin: str, destination: str, duration: int, budget: float) -> str:
         """生成行程摘要"""

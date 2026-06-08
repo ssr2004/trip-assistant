@@ -5,7 +5,7 @@ from core.planner import TaskPlanner
 
 
 def test_plan_followup_when_required_slot_missing():
-    """关键信息缺失时生成追问任务"""
+    """关键信息缺失但目的地明确时，先预热攻略再追问"""
     planner = TaskPlanner()
     intent = {
         "intent": "travel_plan",
@@ -23,9 +23,11 @@ def test_plan_followup_when_required_slot_missing():
 
     tasks = planner.plan(intent, {"query": "我要从郑州去杭州玩三天"})
 
-    assert len(tasks) == 1
-    assert tasks[0]["task_type"] == "ask_user"
-    assert tasks[0]["params"]["question"] == "请问您计划什么时候从郑州出发？"
+    assert len(tasks) == 2
+    assert tasks[0]["tool"] == "retrieve_guide"
+    assert tasks[0]["params"]["destination"] == "杭州"
+    assert tasks[1]["task_type"] == "ask_user"
+    assert tasks[1]["params"]["question"] == "请问您计划什么时候从郑州出发？"
 
 
 def test_plan_destination_recommendation_when_destination_missing():
@@ -74,9 +76,10 @@ def test_plan_full_travel_tasks():
     task_types = [task["task_type"] for task in tasks]
     tools = [task.get("tool") for task in tasks]
 
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert task_types[-1] == "generate_itinerary"
     assert "search_flights" in tools
+    assert "search_trains" in tools
     assert "search_hotels" in tools
     assert "search_attractions" in tools
     assert "retrieve_guide" in tools
@@ -106,7 +109,7 @@ def test_plan_full_travel_with_weather_constraint_adds_weather_task():
     weather_task = next(task for task in tasks if task.get("tool") == "get_weather_forecast")
     itinerary_task = next(task for task in tasks if task["task_type"] == "generate_itinerary")
 
-    assert len(tasks) == 6
+    assert len(tasks) == 7
     assert "get_weather_forecast" in tools
     assert weather_task["params"]["city"] == "杭州"
     assert weather_task["params"]["days"] == 3
@@ -202,3 +205,27 @@ def test_plan_hotel_search():
     assert tasks[0]["tool"] == "search_hotels"
     assert tasks[0]["params"]["location"] == "杭州"
     assert tasks[0]["params"]["budget"] == 1000
+
+
+def test_plan_train_search():
+    """火车/高铁查询生成12306 MCP搜索任务"""
+    planner = TaskPlanner()
+    intent = {
+        "intent": "train_search",
+        "entities": {
+            "origin": "郑州",
+            "destination": "杭州",
+            "departure_date": "2026-06-10",
+            "preferences": ["高铁优先"],
+        },
+        "missing_slots": [],
+    }
+
+    tasks = planner.plan(intent, {"query": "帮我查郑州到杭州的高铁"})
+
+    assert len(tasks) == 1
+    assert tasks[0]["tool"] == "search_trains"
+    assert tasks[0]["params"]["origin"] == "郑州"
+    assert tasks[0]["params"]["destination"] == "杭州"
+    assert tasks[0]["params"]["date"] == "2026-06-10"
+    assert "高铁优先" in tasks[0]["params"]["preferences"]

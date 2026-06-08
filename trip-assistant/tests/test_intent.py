@@ -183,3 +183,56 @@ def test_parse_date_without_misreading_duration():
 
     assert result["entities"]["departure_date"].endswith("-06-10")
     assert result["entities"]["duration"] == 3
+
+
+def test_parse_relative_date_route_and_region_destination():
+    """解析明天从杭州去西藏玩5天这类组合句式"""
+    parser = IntentParser()
+
+    result = parser.parse("我要明天从杭州去西藏玩5天")
+
+    assert result["intent"] == "travel_plan"
+    assert result["entities"]["origin"] == "杭州"
+    assert result["entities"]["destination"] == "西藏"
+    assert result["entities"]["departure_date"] is not None
+    assert result["entities"]["duration"] == 5
+    assert result["missing_slots"] == []
+
+
+def test_parse_hangzhou_to_yantai_route():
+    """常见城市目的地应正确识别，避免把目的地错判为出发城市"""
+    parser = IntentParser()
+
+    result = parser.parse("我明天从杭州去烟台玩3天")
+
+    assert result["intent"] == "travel_plan"
+    assert result["entities"]["origin"] == "杭州"
+    assert result["entities"]["destination"] == "烟台"
+    assert result["entities"]["duration"] == 3
+    assert result["missing_slots"] == []
+
+
+def test_parse_taiyuan_to_zhengzhou_short_route():
+    """短路线句也应抽取出发地和目的地，不能完全交给LLM兜底。"""
+    parser = IntentParser()
+
+    result = parser.parse("从太原去郑州")
+
+    assert result["intent"] == "travel_plan"
+    assert result["entities"]["origin"] == "太原"
+    assert result["entities"]["destination"] == "郑州"
+    assert "departure_date" in result["missing_slots"]
+    assert "duration" in result["missing_slots"]
+    assert "origin" not in result["missing_slots"]
+    assert "destination" not in result["missing_slots"]
+
+
+def test_parse_route_correction_with_region_origin():
+    """解析用户纠正方向：我是从西藏去杭州"""
+    parser = IntentParser()
+
+    result = parser.parse("我是从西藏去杭州啊")
+
+    assert result["intent"] == "travel_plan"
+    assert result["entities"]["origin"] == "西藏"
+    assert result["entities"]["destination"] == "杭州"

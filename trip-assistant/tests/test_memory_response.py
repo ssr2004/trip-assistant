@@ -147,7 +147,7 @@ async def test_agent_memory_preferences_appear_in_later_response(tmp_path):
     assert "个性化参考" in response
     assert "慢节奏" in response
     assert "地铁附近住宿" in response
-    assert "不生成航班号、票价、舱位、余票、酒店房态、房型或可订价格" in response
+    assert "不生成航班号、舱位、余票、酒店房态、房型或可订价格" in response
     assert "东方航空" not in response
     assert "杭州西湖国宾馆" not in response
     assert "每日行程" in response

@@ -31,7 +31,7 @@ async def test_complete_travel_plan_response(agent):
     assert "已为您规划郑州到杭州的3天旅行方案" in response
     assert "景点推荐" in response
     assert "每日行程" in response
-    assert "不生成航班号、票价、舱位、余票、酒店房态、房型或可订价格" in response
+    assert "不生成航班号、舱位、余票、酒店房态、房型或可订价格" in response
     assert "{'" not in response
 
 
@@ -57,6 +57,49 @@ async def test_agent_returns_weather_artifact(agent):
     assert weather["city"] == "杭州"
     assert len(weather["forecasts"]) == 3
     assert weather["travel_advice"]
+
+
+@pytest.mark.asyncio
+async def test_agent_understands_region_route_without_wrong_followup(agent):
+    """完整句式中包含西藏时不应把杭州误判为目的地后追问出发地"""
+    result = await agent.arun_with_artifacts("我要明天从杭州去西藏玩5天", "test-session-context-route")
+
+    intent = result["execution_trace"]["summary"]["intent"]
+    assert intent == "travel_plan"
+    assert "请问您准备从哪个城市出发去杭州" not in result["response"]
+    assert "已为您规划杭州到西藏的5天旅行方案" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_agent_merges_pending_travel_slots_across_turns(agent):
+    """用户第二轮补充日期和天数时继承上一轮出发地和目的地"""
+    first = await agent.arun("我要从杭州去西藏", "test-session-slot-merge")
+    second = await agent.arun("明天去，玩5天", "test-session-slot-merge")
+
+    assert "请问您准备从哪个城市出发去西藏" not in first
+    assert "请问您计划什么时候从杭州出发" in first
+    assert "已为您规划杭州到西藏的5天旅行方案" in second
+    assert "请问您计划去哪个城市旅行" not in second
+
+
+@pytest.mark.asyncio
+async def test_agent_allows_route_correction_with_previous_date_duration(agent):
+    """用户纠正出发地和目的地时保留上一轮已给出的日期和天数"""
+    await agent.arun("我要明天从杭州去西藏玩5天", "test-session-route-correction")
+    response = await agent.arun("我是从西藏去杭州啊", "test-session-route-correction")
+
+    assert "已为您规划西藏到杭州的5天旅行方案" in response
+    assert "请问您计划什么时候从西藏出发" not in response
+
+
+@pytest.mark.asyncio
+async def test_agent_pending_context_is_session_scoped(agent):
+    """不同session之间不能串用pending旅行上下文"""
+    await agent.arun("我要从杭州去西藏", "test-session-context-a")
+    response = await agent.arun("明天去，玩5天", "test-session-context-b")
+
+    assert "已为您规划杭州到西藏的5天旅行方案" not in response
+    assert "候选目的地" in response
 
 
 @pytest.mark.asyncio

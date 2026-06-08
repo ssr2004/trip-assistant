@@ -19,6 +19,7 @@ class TaskPlanner:
     ALLOWED_TASK_TYPES = {"ask_user", "tool_call", "recommend_destination", "generate_itinerary", "dynamic_rag_query", "revise_itinerary"}
     ALLOWED_TOOLS = {
         "search_flights",
+        "search_trains",
         "search_hotels",
         "search_attractions",
         "retrieve_policy",
@@ -151,7 +152,7 @@ class TaskPlanner:
             return self._build_travel_plan(intent_type, entities, user_query)
 
         if missing_slots:
-            return self._build_followup_plan(intent_type, entities, missing_slots, intent)
+            return self._build_followup_plan(intent_type, entities, missing_slots, intent, user_query)
 
         if intent_type == "travel_plan":
             return self._build_travel_plan(intent_type, entities, user_query)
@@ -169,6 +170,21 @@ class TaskPlanner:
                     **self._memory_params(entities, "search_flights"),
                 },
                 reason="用户需要查询两个城市之间的航班信息。",
+            )
+
+        if intent_type == "train_search":
+            return self._build_single_tool_plan(
+                intent_type=intent_type,
+                tool="search_trains",
+                name="搜索火车",
+                params={
+                    "origin": entities.get("origin"),
+                    "destination": entities.get("destination"),
+                    "date": entities.get("departure_date"),
+                    "preferences": self._task_preferences(entities, "search_trains"),
+                    **self._memory_params(entities, "search_trains"),
+                },
+                reason="用户需要查询两个城市之间的真实火车或高铁信息。",
             )
 
         if intent_type == "hotel_search":
@@ -372,25 +388,46 @@ class TaskPlanner:
         entities: Dict,
         missing_slots: List[str],
         intent: Dict,
+        user_query: str = "",
     ) -> TaskPlan:
         """构建追问任务计划"""
         question = intent.get("followup_question") or self._fallback_question(missing_slots, entities)
+        tasks = []
+        destination = entities.get("destination")
+        if intent_type == "travel_plan" and destination:
+            guide_preferences = self._task_preferences(entities, "retrieve_guide")
+            duration = entities.get("duration") or 3
+            tasks.append(PlanningTask(
+                task_id="retrieve_guide_prewarm_1",
+                task_type="tool_call",
+                name="预热目的地攻略",
+                priority=1,
+                tool="retrieve_guide",
+                params={
+                    "query": self._build_guide_query(destination, duration, guide_preferences) or user_query,
+                    "destination": destination,
+                    **self._memory_params(entities, "retrieve_guide"),
+                },
+                reason="目的地已明确，即使日期或天数仍需追问，也先触发攻略检索和自增长RAG入库。",
+            ))
+
         task = PlanningTask(
             task_id="ask_user_1",
             task_type="ask_user",
             name="补充缺失信息",
-            priority=1,
+            priority=2 if tasks else 1,
             params={
                 "missing_slots": missing_slots,
                 "question": question,
             },
             reason="当前旅行需求缺少关键信息，继续调用工具前需要先向用户追问。",
         )
+        tasks.append(task)
         return TaskPlan(
             intent=intent_type,
-            tasks=[task],
+            tasks=tasks,
             need_user_input=True,
-            summary="需要用户补充关键信息后再继续规划。",
+            summary="需要用户补充关键信息；目的地已明确时先预热攻略知识库。",
         )
 
     def _build_travel_plan(self, intent_type: str, entities: Dict, user_query: str) -> TaskPlan:
@@ -400,6 +437,7 @@ class TaskPlanner:
         duration = entities.get("duration") or 3
         budget = entities.get("budget")
         flight_preferences = self._task_preferences(entities, "search_flights")
+        train_preferences = self._task_preferences(entities, "search_trains")
         hotel_preferences = self._task_preferences(entities, "search_hotels")
         attraction_preferences = self._task_preferences(entities, "search_attractions")
         guide_preferences = self._task_preferences(entities, "retrieve_guide")
@@ -430,10 +468,26 @@ class TaskPlanner:
 
         tasks = [
             PlanningTask(
+                task_id="search_trains_1",
+                task_type="tool_call",
+                name="搜索火车",
+                priority=1,
+                tool="search_trains",
+                params={
+                    "origin": origin,
+                    "destination": destination,
+                    "date": entities.get("departure_date"),
+                    "budget": budget,
+                    "preferences": train_preferences,
+                    **self._memory_params(entities, "search_trains"),
+                },
+                reason="完整旅行规划需要优先获取12306真实火车或高铁方案。",
+            ),
+            PlanningTask(
                 task_id="search_flights_1",
                 task_type="tool_call",
                 name="搜索航班",
-                priority=1,
+                priority=2,
                 tool="search_flights",
                 params={
                     "origin": origin,
@@ -449,7 +503,7 @@ class TaskPlanner:
                 task_id="search_hotels_1",
                 task_type="tool_call",
                 name="搜索酒店",
-                priority=2,
+                priority=3,
                 tool="search_hotels",
                 params={
                     "location": destination,
@@ -465,7 +519,7 @@ class TaskPlanner:
                 task_id="search_attractions_1",
                 task_type="tool_call",
                 name="搜索景点",
-                priority=3,
+                priority=4,
                 tool="search_attractions",
                 params={
                     "location": destination,
@@ -479,7 +533,7 @@ class TaskPlanner:
                 task_id="retrieve_guide_1",
                 task_type="tool_call",
                 name="检索旅行攻略",
-                priority=4,
+                priority=5,
                 tool="retrieve_guide",
                 params={
                     "query": self._build_guide_query(destination, duration, guide_preferences),
@@ -536,6 +590,7 @@ class TaskPlanner:
             tasks.append(weather_task)
 
         itinerary_dependencies = [
+            "search_trains_1",
             "search_flights_1",
             "search_hotels_1",
             "search_attractions_1",
@@ -869,6 +924,7 @@ class TaskPlanner:
             tool_name = task.tool or task.task_type
             if tool_name not in {
                 "search_flights",
+                "search_trains",
                 "search_hotels",
                 "search_attractions",
                 "retrieve_guide",

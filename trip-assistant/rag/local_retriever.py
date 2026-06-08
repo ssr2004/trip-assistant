@@ -43,7 +43,7 @@ class LocalMarkdownRetriever:
             return documents
 
         base_dir = base_dir or directory.parent
-        for filepath in sorted(directory.glob("*.md")):
+        for filepath in sorted(directory.rglob("*.md")):
             content = filepath.read_text(encoding="utf-8")
             documents.append({
                 "document_id": filepath.stem,

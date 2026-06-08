@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 IntentType = Literal[
     "travel_plan",
     "flight_search",
+    "train_search",
     "hotel_search",
     "attraction_search",
     "policy_query",

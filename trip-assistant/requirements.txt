@@ -12,6 +12,7 @@ langchain>=1.0,<2.0
 langchain-core>=1.0,<2.0
 langgraph>=1.0,<2.0
 openai>=1.50,<3.0
+mcp>=1.10,<2.0
 
 # 配置和数据模型
 pydantic>=2.8,<3.0
