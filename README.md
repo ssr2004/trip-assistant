@@ -6,7 +6,6 @@
 
 ## 项目定位
 
-梦旅当前更准确的定位是 **RAG 增强的单 Agent 工作流 Demo**，而不是完整商旅平台或生产级预订系统。
 
 - **是单 Agent**：核心入口是 `TravelAgent`，内部通过 LangGraph 状态图串联多个能力节点。
 - **不是多 Agent**：`IntentParser`、`TaskPlanner`、`RAGRetriever`、`ToolRegistry`、`ResponseBuilder` 是 Agent 内部模块，不是独立自治 Agent。
