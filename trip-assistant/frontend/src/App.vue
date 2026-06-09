@@ -6,7 +6,7 @@ import ChatPanel from "./components/ChatPanel.vue";
 import StatusPanel from "./components/StatusPanel.vue";
 import type { ChatArtifacts, ChatMessage, ExecutionTrace, ExternalStatusResponse, LLMStatusResponse, MessageRole } from "./types";
 
-const SESSION_STORAGE_KEY = "travelMindSessionId";
+const SESSION_STORAGE_KEY = "menglvSessionId";
 
 const input = ref("");
 window.localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -22,7 +22,7 @@ const messages = ref<ChatMessage[]>([
     id: crypto.randomUUID(),
     role: "assistant",
     content:
-      "您好，我是 TravelMind。可以输入完整旅行需求，也可以用右侧快捷脚本演示多轮规划、路线优化和雨天调整。",
+      "您好，我是梦旅。可以输入完整旅行需求，也可以用右侧快捷脚本演示多轮规划、路线优化和雨天调整。",
     artifacts: {},
     execution_trace: { steps: [], summary: {} },
   },
@@ -139,8 +139,7 @@ onMounted(() => {
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">TravelMind 演示控制台</p>
-        <h1>多智能体旅行规划系统</h1>
+        <h1>梦旅</h1>
       </div>
       <div class="topbar-actions">
         <button class="icon-button" type="button" title="刷新外部 API 状态" @click="refreshExternalStatus">

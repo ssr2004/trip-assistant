@@ -47,7 +47,7 @@ def test_frontend_calls_chat_and_external_status_apis():
     assert "Promise<LLMStatusResponse>" in api_ts
     assert "Promise<HistoryResponse>" in api_ts
     assert "Promise<SessionRunsResponse>" in api_ts
-    assert "travelMindSessionId" in app_vue
+    assert "menglvSessionId" in app_vue
     assert "newSession" in app_vue
     assert "data.artifacts" in app_vue
     assert "llmStatus" in app_vue

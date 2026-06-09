@@ -1,4 +1,4 @@
-# TravelMind backend runtime image
+# 梦旅 backend runtime image
 
 ARG PYTHON_IMAGE=python:3.11-slim
 FROM ${PYTHON_IMAGE}

@@ -1,4 +1,4 @@
-"""Run the unified local quality gate for TravelMind.
+"""Run the unified local quality gate for 梦旅.
 
 The gate intentionally uses deterministic defaults: benchmark scripts avoid
 real provider calls unless their own flags are changed manually.
@@ -214,7 +214,7 @@ def print_human_summary(payload: dict[str, Any]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run TravelMind unified quality gate.")
+    parser = argparse.ArgumentParser(description="Run 梦旅 unified quality gate.")
     parser.add_argument("--json", action="store_true", help="Print formatted JSON result.")
     parser.add_argument("--json-compact", action="store_true", help="Print compact JSON result.")
     parser.add_argument("--stop-on-failure", action="store_true", help="Stop after the first failed step.")

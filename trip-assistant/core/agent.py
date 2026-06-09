@@ -399,7 +399,7 @@ class TravelAgent:
         response = self.response_builder.build(intent, task_results, memory_context)
 
         # 保存到记忆
-        self.memory_manager.save(
+        await self.memory_manager.save_async(
             user_message=state["messages"][-1].content,
             ai_message=response,
             session_id=state.get("session_id", "default"),

@@ -32,7 +32,7 @@ from core.memory.manager import MemoryManager  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Evaluate TravelMind Agent E2E benchmark scenarios.")
+    parser = argparse.ArgumentParser(description="Evaluate 梦旅 Agent E2E benchmark scenarios.")
     parser.add_argument("--json-compact", action="store_true", help="Print compact JSON.")
     parser.add_argument("--use-configured-services", action="store_true", help="Allow local real API/LLM settings.")
     parser.add_argument("--scenario", help="Run only one scenario_id.")
@@ -46,7 +46,7 @@ async def main() -> int:
     if not args.use_configured_services:
         _force_deterministic_settings()
 
-    with tempfile.TemporaryDirectory(prefix="travelmind-agent-e2e-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="menglv-agent-e2e-") as temp_dir:
         with redirect_stdout(sys.stderr):
             agent = TravelAgent()
             agent.memory_manager = MemoryManager(

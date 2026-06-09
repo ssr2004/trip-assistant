@@ -71,13 +71,14 @@ class AttractionTool(BaseTool):
             )
 
         attractions = self._get_mock_attractions(location, keywords)
+        rag_documents = [self._mock_attraction_to_rag_document(attraction) for attraction in attractions]
         api_metadata = api_result.get("metadata", {}) if isinstance(api_result, dict) else {}
         return self.success_result(
             data={
                 "location": location,
                 "keywords": keywords or [],
                 "attractions": attractions,
-                "rag_documents": [],
+                "rag_documents": rag_documents,
             },
             metadata={
                 **self.external_metadata(api_metadata),
@@ -136,6 +137,35 @@ class AttractionTool(BaseTool):
             return float(rating)
         except (TypeError, ValueError):
             return 4.6
+
+    def _mock_attraction_to_rag_document(self, attraction: Dict) -> Dict:
+        """Convert local fallback attraction data into a dynamic RAG document."""
+        document = self.rag_adapter.from_api_record(
+            record=attraction,
+            source_type="attraction",
+            provider="local_mock",
+            title_field="name",
+            content_fields=[
+                "name",
+                "category",
+                "description",
+                "address",
+                "location",
+                "rating",
+                "opening_hours",
+                "ticket_price",
+            ],
+        )
+        document["metadata"].update({
+            "provider": "local",
+            "source": "mock_attraction_data",
+            "name": str(attraction.get("name") or ""),
+            "category": str(attraction.get("category") or ""),
+            "address": str(attraction.get("address") or attraction.get("location") or ""),
+            "location": str(attraction.get("location") or ""),
+            "rating": attraction.get("rating"),
+        })
+        return document
 
     def _get_mock_attractions(self, location: str, keywords: List[str]) -> List[Dict]:
         """获取本地兜底模拟景点数据"""

@@ -22,3 +22,4 @@ def isolate_real_external_api_keys(monkeypatch):
     monkeypatch.setattr(settings, "MCP_FLIGHT_ENABLED", False)
     monkeypatch.setattr(settings, "TAVILY_SEARCH_ENABLED", False)
     monkeypatch.setattr(settings, "TAVILY_API_KEY", "")
+    monkeypatch.setattr(settings, "EXTERNAL_API_CACHE_ENABLED", False)

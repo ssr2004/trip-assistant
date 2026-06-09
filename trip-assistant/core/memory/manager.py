@@ -29,8 +29,14 @@ class MemoryManager:
         self.long_term = LongTermMemory(long_term_storage_path) if long_term_storage_path else LongTermMemory()
         self.episodic = EpisodicMemory(episodic_storage_path) if episodic_storage_path else EpisodicMemory()
         self.preference_extractor = PreferenceExtractor()
+        self.last_preference_extraction_report = None
 
     def save(self, user_message: str, ai_message: str, session_id: str = "default"):
+        self.short_term.add(user_message, ai_message, session_id)
+        self.episodic.save_interaction(user_message, ai_message, session_id)
+        self.extract_and_save_preferences(user_message, session_id)
+        return
+
         """
         保存对话到记忆系统
 
@@ -47,6 +53,12 @@ class MemoryManager:
 
         # 抽取并更新长期用户偏好
         self.extract_and_save_preferences(user_message, session_id)
+
+    async def save_async(self, user_message: str, ai_message: str, session_id: str = "default"):
+        """Save conversation and update preferences with rule-first LLM fallback."""
+        self.short_term.add(user_message, ai_message, session_id)
+        self.episodic.save_interaction(user_message, ai_message, session_id)
+        await self.extract_and_save_preferences_async(user_message, session_id)
 
     def retrieve(self, query: str, session_id: str = "default") -> Dict:
         """
@@ -78,6 +90,18 @@ class MemoryManager:
     def extract_and_save_preferences(self, user_message: str, session_id: str = "default") -> Dict:
         """从用户消息中抽取偏好并保存到长期记忆"""
         preferences = self.preference_extractor.extract(user_message)
+        self.last_preference_extraction_report = self.preference_extractor.evaluate_extraction(
+            user_message,
+            preferences,
+        )
+        if not preferences.has_preferences():
+            return self.long_term.get_preferences(session_id)
+        return self.long_term.update_preferences(preferences, session_id)
+
+    async def extract_and_save_preferences_async(self, user_message: str, session_id: str = "default") -> Dict:
+        """Extract preferences using rules first and LLM fallback for abstract wording."""
+        preferences = await self.preference_extractor.extract_hybrid(user_message)
+        self.last_preference_extraction_report = self.preference_extractor.last_extraction_report
         if not preferences.has_preferences():
             return self.long_term.get_preferences(session_id)
         return self.long_term.update_preferences(preferences, session_id)

@@ -31,6 +31,9 @@ trip-assistant/*.sqlite
 # Local planning documents
 trip-assistant/local-docs/
 
+# README is maintained directly on GitHub for this local workflow.
+trip-assistant/README.md
+
 # Frontend dependencies and build output
 trip-assistant/frontend/node_modules/
 trip-assistant/frontend/dist/

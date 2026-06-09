@@ -42,7 +42,7 @@ async def test_demo_flow_plan_weather_route_dynamic_rag_with_trace():
 
 
 def test_demo_external_status_contract_supports_resume_script(monkeypatch):
-    """演示控制台先展示外部API状态，且不泄露真实Key值。"""
+    """前端控制台先展示外部API状态，且不泄露真实Key值。"""
     monkeypatch.setattr(settings, "AMAP_API_KEY", "demo-amap-key")
     monkeypatch.setattr(settings, "WEATHER_API_KEY", "")
     monkeypatch.setattr(settings, "EXTERNAL_API_MOCK_ENABLED", True)

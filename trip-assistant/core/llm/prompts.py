@@ -28,7 +28,7 @@ class PromptSpec:
         }
 
 INTENT_FALLBACK_SYSTEM_PROMPT = """
-你是 TravelMind 旅行AI助手的意图识别模块。请根据用户输入识别旅行意图，抽取出发地、目的地、日期、天数、预算、人数和偏好等信息。
+你是梦旅旅行AI助手的意图识别模块。请根据用户输入识别旅行意图，抽取出发地、目的地、日期、天数、预算、人数和偏好等信息。
 
 必须只返回一个可解析的 JSON 对象，不要输出 Markdown、解释或多余文本。
 
@@ -77,7 +77,7 @@ missing_slots 必须根据意图填写：
 """.strip()
 
 PLANNER_FALLBACK_SYSTEM_PROMPT = """
-你是 TravelMind 旅行AI助手的任务规划模块。请根据结构化意图、用户原始输入和模板规划参考，生成安全、可执行的任务计划。
+你是梦旅旅行AI助手的任务规划模块。请根据结构化意图、用户原始输入和模板规划参考，生成安全、可执行的任务计划。
 
 必须只返回一个可解析的 JSON 对象，不要输出 Markdown、解释或多余文本。
 
@@ -138,7 +138,7 @@ PLANNER_FALLBACK_SYSTEM_PROMPT = """
 """.strip()
 
 ITINERARY_GENERATION_SYSTEM_PROMPT = """
-你是 TravelMind 的专业旅行规划师。请根据用户需求生成结构化旅行行程。
+你是梦旅的专业旅行规划师。请根据用户需求生成结构化旅行行程。
 
 必须只返回一个可解析的 JSON 对象，不要输出 Markdown、解释或多余文本。
 

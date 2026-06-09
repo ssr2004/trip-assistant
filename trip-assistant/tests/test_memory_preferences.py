@@ -4,10 +4,30 @@ Memory用户偏好抽取与长期记忆测试
 import pytest
 
 from core.agent import TravelAgent
+from core.llm import LLMResponse
 from core.memory.long_term import LongTermMemory
 from core.memory.manager import MemoryManager
 from core.memory.preference_extractor import PreferenceExtractor
 from core.planner import TaskPlanner
+
+
+class FakePreferenceLLMClient:
+    def __init__(self, content: str = "", success: bool = True):
+        self.content = content
+        self.success = success
+        self.calls = 0
+        self.last_request = None
+        self.available = True
+
+    async def chat(self, request):
+        self.calls += 1
+        self.last_request = request
+        return LLMResponse(
+            success=self.success,
+            content=self.content,
+            error=None if self.success else "fake preference llm failed",
+            metadata={"duration_ms": 1, "total_tokens": 16},
+        )
 
 
 @pytest.fixture
@@ -45,6 +65,146 @@ def test_preference_extractor_returns_empty_for_no_preference():
     assert preference.has_preferences() is False
     assert preference.raw_preferences == []
     assert preference.updated_at is None
+
+
+@pytest.mark.asyncio
+async def test_preference_extractor_rule_first_skips_llm_for_clear_preferences():
+    """Clear keyword preferences are handled by rules without paying for LLM."""
+    llm_client = FakePreferenceLLMClient(content='{"travel_styles":["深度游"]}')
+    extractor = PreferenceExtractor(llm_client=llm_client)
+
+    preference = await extractor.extract_hybrid("我喜欢慢节奏，酒店最好靠近地铁，预算有限")
+
+    assert llm_client.calls == 0
+    assert "慢节奏" in preference.travel_styles
+    assert "地铁附近" in preference.hotel_preferences
+    assert preference.budget_preference == "经济型"
+    report = extractor.last_extraction_report
+    assert report is not None
+    assert report.should_use_llm is False
+    assert report.preference_intent_score >= 0.55
+    assert report.rule_confidence >= 0.85
+    assert report.decision_reason == "high_confidence_rule_extraction"
+
+
+def test_preference_extraction_report_accepts_high_confidence_rules():
+    """Rule extraction exposes clear confidence metrics when rules are enough."""
+    extractor = PreferenceExtractor()
+    text = "我喜欢慢节奏，酒店最好靠近地铁，预算有限"
+    rule_preference = extractor.extract(text)
+
+    report = extractor.evaluate_extraction(text, rule_preference)
+
+    assert report.should_use_llm is False
+    assert report.preference_intent_score >= 0.55
+    assert report.rule_confidence >= 0.85
+    assert report.category_count >= 3
+    assert report.raw_hit_count >= 3
+    assert report.decision_reason == "high_confidence_rule_extraction"
+
+
+def test_preference_extraction_report_escalates_intent_without_rule_hit():
+    """Preference-like abstract wording without rule hits is escalated to LLM."""
+    extractor = PreferenceExtractor()
+    text = "我不想像赶场一样旅行，想体验当地生活"
+    rule_preference = extractor.extract(text)
+
+    report = extractor.evaluate_extraction(text, rule_preference)
+
+    assert rule_preference.has_preferences() is False
+    assert report.should_use_llm is True
+    assert report.preference_intent_score >= 0.55
+    assert report.rule_confidence == 0
+    assert report.abstract_marker_count >= 2
+    assert report.decision_reason == "preference_intent_without_rule_hit"
+
+
+def test_preference_extraction_report_escalates_weak_abstract_rule_hit():
+    """Weak rule hits with abstract constraints are escalated for semantic mapping."""
+    extractor = PreferenceExtractor()
+    text = "带父母出去，希望行程舒服一点，别太累"
+    rule_preference = extractor.extract(text)
+
+    report = extractor.evaluate_extraction(text, rule_preference)
+
+    assert rule_preference.has_preferences() is True
+    assert report.should_use_llm is True
+    assert report.rule_confidence < 0.75
+    assert report.ambiguity_score >= 0.5
+    assert report.decision_reason == "rule_confidence_below_threshold"
+
+
+@pytest.mark.asyncio
+async def test_preference_extractor_uses_llm_for_abstract_preferences():
+    """Abstract preference wording is mapped by LLM into structured memory labels."""
+    llm_client = FakePreferenceLLMClient(
+        content="""
+        {
+          "travel_styles": ["低强度", "当地生活体验"],
+          "hotel_preferences": ["舒适型酒店"],
+          "transport_preferences": ["低折腾"],
+          "excluded_preferences": ["排除赶场式行程", "排除过度游客化"],
+          "budget_preference": "舒适型",
+          "preference_evidence": {
+            "travel_styles": ["不想像赶场一样旅行", "体验当地生活"],
+            "hotel_preferences": ["住得舒服一点"]
+          }
+        }
+        """
+    )
+    extractor = PreferenceExtractor(llm_client=llm_client)
+
+    preference = await extractor.extract_hybrid("我不想像赶场一样旅行，希望住得舒服一点，体验当地生活，不要太游客化")
+
+    assert llm_client.calls == 1
+    assert llm_client.last_request.response_format == "json_object"
+    assert extractor.last_extraction_report is not None
+    assert extractor.last_extraction_report.should_use_llm is True
+    assert extractor.last_extraction_report.extraction_mode == "rule_llm_merged"
+    assert "低强度" in preference.travel_styles
+    assert "当地生活体验" in preference.travel_styles
+    assert "舒适型酒店" in preference.hotel_preferences
+    assert "低折腾" in preference.transport_preferences
+    assert "排除赶场式行程" in preference.excluded_preferences
+    assert preference.budget_preference == "舒适型"
+    assert "不想像赶场一样旅行" in preference.preference_evidence["travel_styles"]
+
+
+@pytest.mark.asyncio
+async def test_preference_extractor_falls_back_safely_when_llm_fails():
+    """LLM failures do not pollute long-term memory or break rule extraction."""
+    llm_client = FakePreferenceLLMClient(success=False)
+    extractor = PreferenceExtractor(llm_client=llm_client)
+
+    preference = await extractor.extract_hybrid("我不想像赶场一样旅行")
+
+    assert llm_client.calls == 1
+    assert extractor.last_extraction_report is not None
+    assert extractor.last_extraction_report.extraction_mode == "llm_failed_rule_fallback"
+    assert preference.has_preferences() is False
+
+
+@pytest.mark.asyncio
+async def test_memory_manager_async_saves_llm_extracted_preferences(memory_paths):
+    """Async memory save persists abstract preferences extracted by LLM fallback."""
+    llm_client = FakePreferenceLLMClient(
+        content='{"travel_styles":["低强度"],"transport_preferences":["低折腾"],"excluded_preferences":["排除赶场式行程"]}'
+    )
+    manager = MemoryManager(
+        long_term_storage_path=memory_paths["long_term"],
+        episodic_storage_path=memory_paths["episodic"],
+    )
+    manager.preference_extractor = PreferenceExtractor(llm_client=llm_client)
+
+    await manager.save_async("带父母出门，不想太折腾，也别像赶场一样", "已记录", "session-abstract")
+    context = manager.retrieve("帮我规划北京旅行", "session-abstract")
+
+    assert llm_client.calls == 1
+    assert manager.last_preference_extraction_report is not None
+    assert manager.last_preference_extraction_report.should_use_llm is True
+    assert "低强度" in context["preferences"]["travel_styles"]
+    assert "低折腾" in context["preferences"]["transport_preferences"]
+    assert "排除赶场式行程" in context["preferences"]["excluded_preferences"]
 
 
 def test_long_term_memory_merges_and_deduplicates_preferences(memory_paths):
@@ -237,3 +397,47 @@ async def test_agent_uses_saved_preferences_in_later_planning(memory_paths):
     itinerary_task = next(task for task in plan_result["tasks"] if task["task_id"] == "generate_itinerary_1")
     assert "慢节奏" in itinerary_task["params"]["preferences"]
     assert "地铁附近" in itinerary_task["params"]["preferences"]
+
+
+@pytest.mark.asyncio
+async def test_agent_uses_llm_extracted_abstract_preferences_in_later_planning(memory_paths):
+    """Agent saves abstract preferences through LLM fallback and reuses them in planning."""
+    llm_client = FakePreferenceLLMClient(
+        content='{"travel_styles":["低强度"],"transport_preferences":["低折腾"],"excluded_preferences":["排除赶场式行程"]}'
+    )
+    agent = TravelAgent()
+    agent.memory_manager = MemoryManager(
+        long_term_storage_path=memory_paths["long_term"],
+        episodic_storage_path=memory_paths["episodic"],
+    )
+    agent.memory_manager.preference_extractor = PreferenceExtractor(llm_client=llm_client)
+
+    await agent.arun("带父母出门，不想太折腾，也别像赶场一样", "memory-abstract-session")
+    retrieve_result = await agent._retrieve_context({
+        "messages": [type("Message", (), {"content": "我要从上海去北京玩两天，明天出发"})()],
+        "session_id": "memory-abstract-session",
+    })
+    plan_result = await agent._plan_tasks({
+        "messages": [type("Message", (), {"content": "我要从上海去北京玩两天，明天出发"})()],
+        "intent": {
+            "intent": "travel_plan",
+            "entities": {
+                "origin": "上海",
+                "destination": "北京",
+                "departure_date": "2026-06-10",
+                "duration": 2,
+                "budget": None,
+                "preferences": [],
+            },
+            "missing_slots": [],
+            "confidence": 0.9,
+        },
+        "rag_context": [],
+        "memory_context": retrieve_result["memory_context"],
+    })
+
+    itinerary_task = next(task for task in plan_result["tasks"] if task["task_id"] == "generate_itinerary_1")
+    assert llm_client.calls == 1
+    assert "低强度" in itinerary_task["params"]["preferences"]
+    assert "低折腾" in itinerary_task["params"]["preferences"]
+    assert "排除赶场式行程" in itinerary_task["params"]["memory_profile"]["excluded_preferences"]

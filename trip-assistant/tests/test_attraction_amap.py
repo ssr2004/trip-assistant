@@ -117,4 +117,5 @@ async def test_attraction_tool_falls_back_to_local_mock_when_amap_returns_empty(
     assert result["metadata"]["mock"] is True
     assert result["metadata"]["fallback_reason"] == "amap_poi_empty"
     assert result["data"]["attractions"][0]["name"] == "西湖"
-    assert result["data"]["rag_documents"] == []
+    assert len(result["data"]["rag_documents"]) == 4
+    assert result["data"]["rag_documents"][0]["source"].startswith("api/local_mock/attraction/")

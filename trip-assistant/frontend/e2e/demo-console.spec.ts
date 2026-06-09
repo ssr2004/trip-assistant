@@ -16,7 +16,7 @@ test.beforeEach(async ({ page }) => {
 test("runs the resume demo script with artifacts and trace", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "多智能体旅行规划系统" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "梦旅" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "模型能力状态" })).toBeVisible();
   await expect(page.getByText("真实 LLM")).toBeVisible();
   await expect(page.getByText("deepseek / deepseek-v4-flash")).toBeVisible();
@@ -60,7 +60,7 @@ test("runs the resume demo script with artifacts and trace", async ({ page }) =>
 test("keeps the demo controls usable on mobile viewport", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "多智能体旅行规划系统" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "梦旅" })).toBeVisible();
   await expect(page.getByRole("button", { name: /1 完整规划/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /4 景点追问/ })).toBeVisible();
 

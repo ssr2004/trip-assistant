@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     )
 
     # 应用基础配置
-    APP_NAME: str = "TravelMind"
+    APP_NAME: str = "梦旅"
     APP_VERSION: str = "1.0.0"
     APP_ENV: str = "development"
     DEBUG: bool = True
