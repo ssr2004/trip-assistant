@@ -76,8 +76,8 @@ class Settings(BaseSettings):
     MCP_TIMEOUT: int = 20
     MCP_12306_ENABLED: bool = True
     MCP_12306_URL: str = ""
-    MCP_12306_COMMAND: str = "uvx"
-    MCP_12306_ARGS: str = "mcp-server-12306"
+    MCP_12306_COMMAND: str = "npx"
+    MCP_12306_ARGS: str = "-y 12306-mcp"
     MCP_AMAP_ENABLED: bool = True
     MCP_AMAP_URL: str = ""
     MCP_AMAP_COMMAND: str = "npx"

@@ -274,20 +274,24 @@ async def test_hotel_tool_handles_missing_location():
 
 @pytest.mark.asyncio
 async def test_train_tool_returns_real_mcp_ticket_result():
-    """火车工具通过12306 MCP结果返回真实车次结构"""
+    """火车工具通过 12306 MCP（Joooook/12306-mcp，get-tickets format=json）返回真实车次结构"""
     mcp_client = FakeMCPClient({
         "success": True,
         "data": {
-            "trains": [
+            "items": [
                 {
-                    "train_code": "G1964",
-                    "from_station_name": "郑州东",
-                    "to_station_name": "杭州东",
+                    "train_no": "240000G196401",
+                    "start_train_code": "G1964",
+                    "from_station": "郑州东",
+                    "to_station": "杭州东",
                     "start_time": "07:12",
                     "arrive_time": "12:35",
                     "lishi": "05:23",
-                    "ze_num": "有",
-                    "zy_num": "12",
+                    "prices": [
+                        {"seat_name": "二等座", "short": "ze", "num": "有", "price": 400},
+                        {"seat_name": "一等座", "short": "zy", "num": "12", "price": 640},
+                    ],
+                    "dw_flag": ["复兴号"],
                 }
             ]
         },
@@ -303,20 +307,25 @@ async def test_train_tool_returns_real_mcp_ticket_result():
     assert result["metadata"]["mock"] is False
     assert result["metadata"]["real_inventory"] is True
     called_tools = [tool_name for tool_name, _ in mcp_client.calls]
-    assert "search-stations" in called_tools
-    assert "query-tickets" in called_tools
-    assert "query-ticket-price" in called_tools
-    query_ticket_args = next(arguments for tool_name, arguments in mcp_client.calls if tool_name == "query-tickets")
-    assert query_ticket_args == {
-        "from_station": "郑州",
-        "to_station": "杭州",
-        "train_date": "2026-06-10",
+    assert "get-tickets" in called_tools
+    assert "get-station-code-of-citys" in called_tools
+    get_tickets_args = next(arguments for tool_name, arguments in mcp_client.calls if tool_name == "get-tickets")
+    assert get_tickets_args == {
+        "date": "2026-06-10",
+        "fromStation": "郑州",
+        "toStation": "杭州",
+        "format": "json",
+        "limitedNum": 8,
     }
     train = result["data"]["trains"][0]
     assert train["train_code"] == "G1964"
     assert train["from_station"] == "郑州东"
     assert train["to_station"] == "杭州东"
-    assert train["seats"]["second_class"] == "有"
+    assert train["departure_time"] == "07:12"
+    assert train["arrival_time"] == "12:35"
+    assert train["duration"] == "05:23"
+    assert "有" in train["seats"]["second_class"]
+    assert "剩余12张" in train["seats"]["first_class"]
 
 
 @pytest.mark.asyncio

@@ -16,10 +16,13 @@ embedding 后端变化（如从降级向量切到真实 Key）时，model_signat
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class VectorStore:
@@ -102,11 +105,18 @@ class InMemoryVectorStore(VectorStore):
             vectors = vectors.reshape(1, -1)
         if self._matrix is None:
             self._matrix = vectors
+        elif vectors.shape[1] != self._matrix.shape[1]:
+            # embedding 后端可能降级（真实调用失败→确定性降级，如 1024→384），
+            # 清空旧向量并以新维度重建，避免抛错中断检索（检索层会降级为纯 BM25）。
+            logger.warning(
+                "embedding 维度变化 %d→%d，向量库清空重建",
+                self._matrix.shape[1],
+                vectors.shape[1],
+            )
+            self._ids = []
+            self._id_to_index = {}
+            self._matrix = vectors
         else:
-            if vectors.shape[1] != self._matrix.shape[1]:
-                raise ValueError(
-                    f"embedding 维度不一致：{vectors.shape[1]} vs {self._matrix.shape[1]}"
-                )
             self._matrix = np.vstack([self._matrix, vectors])
         for chunk_id in ids:
             self._id_to_index[chunk_id] = len(self._ids)

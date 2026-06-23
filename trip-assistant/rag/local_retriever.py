@@ -238,30 +238,34 @@ class LocalMarkdownRetriever:
         把 query 与缺失 chunk 的文本合并成一次 embed_batch 调用，
         再把 chunk 向量写入向量库（命中缓存的 chunk 不重复 embed）。
         这样每次检索恒为单次 embedding 调用，且 chunk 向量被缓存/持久化。
+        任何异常（embedding 后端失败/维度不一致等）都降级为空分数，检索回退到纯 BM25。
         """
         if not chunks:
             return {}
-
-        items = [(chunk.get("chunk_id", ""), self._searchable_content(chunk)) for chunk in chunks]
-        missing_pairs = [
-            (chunk_id, text)
-            for chunk_id, text in items
-            if chunk_id and chunk_id not in self.vector_store
-        ]
-        batch_texts = [query] + [text for _, text in missing_pairs]
-        embeddings = self.embedding_manager.embed_batch(batch_texts)
-        query_embedding = embeddings[0]
-        if missing_pairs:
-            self.vector_store.add(
-                [chunk_id for chunk_id, _ in missing_pairs],
-                embeddings[1:],
-            )
-        scored = self.vector_store.search(query_embedding, top_k=len(items))
-        id_to_score = {chunk_id: score for chunk_id, score in scored}
-        return {
-            chunk_id: max(0.0, id_to_score.get(chunk_id, 0.0))
-            for chunk_id, _ in items
-        }
+        try:
+            items = [(chunk.get("chunk_id", ""), self._searchable_content(chunk)) for chunk in chunks]
+            missing_pairs = [
+                (chunk_id, text)
+                for chunk_id, text in items
+                if chunk_id and chunk_id not in self.vector_store
+            ]
+            batch_texts = [query] + [text for _, text in missing_pairs]
+            embeddings = self.embedding_manager.embed_batch(batch_texts)
+            query_embedding = embeddings[0]
+            if missing_pairs:
+                self.vector_store.add(
+                    [chunk_id for chunk_id, _ in missing_pairs],
+                    embeddings[1:],
+                )
+            scored = self.vector_store.search(query_embedding, top_k=len(items))
+            id_to_score = {chunk_id: score for chunk_id, score in scored}
+            return {
+                chunk_id: max(0.0, id_to_score.get(chunk_id, 0.0))
+                for chunk_id, _ in items
+            }
+        except Exception:
+            # 向量检索失败时降级为纯 BM25（retrieval_strategy 会显示 keyword）
+            return {}
 
     def _hybrid_score(self, keyword_score: float, vector_score: float) -> float:
         """融合关键词和向量分数，保持关键词命中优先。"""
