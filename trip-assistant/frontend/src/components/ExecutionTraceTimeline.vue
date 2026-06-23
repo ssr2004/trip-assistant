@@ -19,6 +19,7 @@ function stageLabel(stage: string): string {
     tool: "Tool",
     task: "Task",
     rag: "RAG",
+    critique: "反思",
   };
   return labels[stage] || stage;
 }

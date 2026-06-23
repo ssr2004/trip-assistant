@@ -1650,6 +1650,28 @@ class TravelAgent:
                 "recoverable": True,
             }
 
+    def _build_critique_trace_step(self, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """构建反思自纠 trace step；critique 未运行时返回 None。"""
+        feedback = state.get("critique_feedback")
+        if not isinstance(feedback, dict):
+            return None
+        attempts = int(state.get("critique_attempts") or 0)
+        issues = feedback.get("issues") or []
+        passed = bool(feedback.get("passed", True))
+        revised = attempts > 1
+        if passed:
+            detail = "约束校验通过" + (f"，自纠修订 {attempts - 1} 次后通过" if revised else "")
+        else:
+            issue_types = "、".join(str(i.get("type", "")) for i in issues[:3] if isinstance(i, dict)) or "未通过"
+            detail = f"发现 {len(issues)} 个约束问题（{issue_types}），已达修订上限"
+        return {
+            "stage": "critique",
+            "label": "行程校验",
+            "status": "success" if passed else "warning",
+            "detail": detail,
+            "execution_mode": "internal_revision" if revised else "internal_rule",
+        }
+
     def _build_execution_trace(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Build a sanitized execution timeline for frontend observability."""
         intent = state.get("intent") if isinstance(state.get("intent"), dict) else {}
@@ -1745,6 +1767,10 @@ class TravelAgent:
                 "detail": f"documents={dynamic_document_count}, sources={dynamic_source_count}",
                 "source_count": dynamic_source_count,
             })
+
+        critique_step = self._build_critique_trace_step(state)
+        if critique_step:
+            steps.append(critique_step)
 
         runtime_metrics = self._build_runtime_metrics(intent_metadata, task_results)
         summary = {

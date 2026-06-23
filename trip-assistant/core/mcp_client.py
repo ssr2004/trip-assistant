@@ -27,13 +27,20 @@ class MCPServerConfig:
 class MCPClient:
     """Small wrapper around the official MCP Python SDK.
 
-    Each call starts a short-lived stdio server process. This keeps lifecycle
-    management simple and makes failures explicit. The wrapper returns only
-    sanitized dict payloads so tools do not depend on SDK model classes.
+    默认复用一个常驻 MCP 会话（避免每次调用都 fork 一次 npx/stdio 子进程，
+    把多次工具调用的首字延迟从秒级降到毫秒级）。会话启动或调用失败时，
+    自动降级为"单次调用"模式（原行为），保证常驻会话异常时也不中断。
+    返回值始终是脱敏 dict，工具不依赖 SDK 模型类。
     """
 
     def __init__(self, config: MCPServerConfig):
         self.config = config
+        # 常驻会话状态（惰性启动，跨调用复用）
+        self._session: Any = None
+        self._session_task: Optional[asyncio.Task] = None
+        self._session_ready: Optional[asyncio.Event] = None
+        self._session_stop: Optional[asyncio.Event] = None
+        self._session_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
@@ -50,10 +57,25 @@ class MCPClient:
         return await self._run("call_tool", tool_name=tool_name, arguments=arguments or {})
 
     async def _run(self, action: str, tool_name: str = "", arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        timeout = max(int(self.config.timeout or settings.MCP_TIMEOUT), 1)
+        # 1) 优先复用常驻会话（快，避免每次 fork 子进程）
+        try:
+            session = await asyncio.wait_for(self._get_session(), timeout=timeout)
+            if session is not None:
+                return await asyncio.wait_for(
+                    self._invoke(session, action, tool_name, arguments or {}),
+                    timeout=timeout,
+                )
+        except asyncio.TimeoutError:
+            return self._error("MCP调用超时。", "timeout")
+        except Exception:
+            # 常驻会话异常 → 重置后走单次调用兜底
+            await self._reset_session()
+        # 2) 兜底：每次调用起一个临时会话（原行为）
         try:
             return await asyncio.wait_for(
                 self._run_sdk(action, tool_name=tool_name, arguments=arguments or {}),
-                timeout=max(int(self.config.timeout or settings.MCP_TIMEOUT), 1),
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
             return self._error("MCP调用超时。", "timeout")
@@ -64,6 +86,95 @@ class MCPClient:
         if self.config.url:
             return await self._run_sse_sdk(action, tool_name, arguments)
         return await self._run_stdio_sdk(action, tool_name, arguments)
+
+    async def _invoke(self, session: Any, action: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """在已初始化的 ClientSession 上执行 list_tools / call_tool。"""
+        if action == "list_tools":
+            tools = await session.list_tools()
+            return self._success(
+                {
+                    "tools": [
+                        {
+                            "name": tool.name,
+                            "description": getattr(tool, "description", None),
+                            "input_schema": getattr(tool, "inputSchema", None),
+                        }
+                        for tool in tools.tools
+                    ]
+                },
+                tool_name="list_tools",
+            )
+        result = await session.call_tool(tool_name, arguments)
+        return self._success(
+            self._normalize_call_result(result),
+            tool_name=tool_name,
+            is_error=bool(getattr(result, "isError", False)),
+        )
+
+    async def _get_session(self) -> Optional[Any]:
+        """惰性启动并返回常驻 MCP 会话；不可用或启动失败时返回 None（由调用方走兜底）。"""
+        if not self.available:
+            return None
+        if self._session is not None:
+            return self._session
+        async with self._session_lock:
+            if self._session is not None:
+                return self._session
+            self._session_ready = asyncio.Event()
+            self._session_stop = asyncio.Event()
+            self._session = None
+            self._session_task = asyncio.create_task(self._session_runner())
+            await self._session_ready.wait()
+        return self._session
+
+    async def _session_runner(self) -> None:
+        """后台任务：持有 transport + ClientSession 打开，直到 _session_stop 被设置。"""
+        try:
+            async with self._open_transport() as (read, write):
+                from mcp import ClientSession
+
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self._session = session
+                    self._session_ready.set()
+                    await self._session_stop.wait()
+        except Exception:
+            self._session = None
+            if self._session_ready is not None:
+                self._session_ready.set()
+
+    def _open_transport(self):
+        """返回 stdio / sse transport 的 async context manager。"""
+        if self.config.url:
+            from mcp.client.sse import sse_client
+
+            timeout = max(int(self.config.timeout or settings.MCP_TIMEOUT), 1)
+            return sse_client(self.config.url, timeout=timeout, sse_read_timeout=timeout)
+        from mcp import StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        params = StdioServerParameters(
+            command=self._resolve_command(self.config.command),
+            args=list(self.config.args),
+            env=self._build_env(),
+        )
+        return stdio_client(params)
+
+    async def _reset_session(self) -> None:
+        """关闭并清理常驻会话，下次调用会重新启动。"""
+        stop = self._session_stop
+        task = self._session_task
+        self._session = None
+        self._session_stop = None
+        self._session_ready = None
+        self._session_task = None
+        if stop is not None:
+            stop.set()
+        if task is not None:
+            try:
+                await asyncio.wait_for(task, timeout=3)
+            except Exception:
+                task.cancel()
 
     async def _run_stdio_sdk(self, action: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         from mcp import ClientSession, StdioServerParameters
@@ -77,27 +188,7 @@ class MCPClient:
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                if action == "list_tools":
-                    tools = await session.list_tools()
-                    return self._success(
-                        {
-                            "tools": [
-                                {
-                                    "name": tool.name,
-                                    "description": getattr(tool, "description", None),
-                                    "input_schema": getattr(tool, "inputSchema", None),
-                                }
-                                for tool in tools.tools
-                            ]
-                        },
-                        tool_name="list_tools",
-                    )
-                result = await session.call_tool(tool_name, arguments)
-                return self._success(
-                    self._normalize_call_result(result),
-                    tool_name=tool_name,
-                    is_error=bool(getattr(result, "isError", False)),
-                )
+                return await self._invoke(session, action, tool_name, arguments)
 
     async def _run_sse_sdk(self, action: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         from mcp import ClientSession
@@ -110,27 +201,7 @@ class MCPClient:
         ) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                if action == "list_tools":
-                    tools = await session.list_tools()
-                    return self._success(
-                        {
-                            "tools": [
-                                {
-                                    "name": tool.name,
-                                    "description": getattr(tool, "description", None),
-                                    "input_schema": getattr(tool, "inputSchema", None),
-                                }
-                                for tool in tools.tools
-                            ]
-                        },
-                        tool_name="list_tools",
-                    )
-                result = await session.call_tool(tool_name, arguments)
-                return self._success(
-                    self._normalize_call_result(result),
-                    tool_name=tool_name,
-                    is_error=bool(getattr(result, "isError", False)),
-                )
+                return await self._invoke(session, action, tool_name, arguments)
 
     def _normalize_call_result(self, result: Any) -> Dict[str, Any]:
         structured = getattr(result, "structuredContent", None)
