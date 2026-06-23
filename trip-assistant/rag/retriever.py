@@ -8,6 +8,22 @@ from typing import Dict, List
 from rag.embeddings import EmbeddingManager
 from rag.local_retriever import LocalMarkdownRetriever
 from rag.reranker import Reranker
+from rag.vector_store import InMemoryVectorStore
+
+
+def _persistent_store_path(namespace: str) -> Path:
+    """持久化向量库的存储路径，按命名空间隔离不同检索器，避免并发写冲突。"""
+    project_dir = Path(__file__).resolve().parents[1]
+    return project_dir / "data" / "vector_store" / f"{namespace}_index"
+
+
+def _build_persistent_store(embedding_manager: EmbeddingManager, namespace: str) -> InMemoryVectorStore:
+    """构建持久化向量库；embedding 后端变化时按 model_signature 自动失效重建。"""
+    signature = f"{embedding_manager.provider}:{embedding_manager.model}"
+    return InMemoryVectorStore(
+        persist_path=_persistent_store_path(namespace),
+        model_signature=signature,
+    )
 
 
 class RAGRetriever:
@@ -16,7 +32,11 @@ class RAGRetriever:
     def __init__(self, embedding_manager: EmbeddingManager = None):
         """初始化检索器"""
         self.embedding_manager = embedding_manager or EmbeddingManager()
-        self.local_retriever = LocalMarkdownRetriever(embedding_manager=self.embedding_manager)
+        self.vector_store = _build_persistent_store(self.embedding_manager, namespace="local")
+        self.local_retriever = LocalMarkdownRetriever(
+            embedding_manager=self.embedding_manager,
+            vector_store=self.vector_store,
+        )
         self.reranker = Reranker()
         self.documents = []
         self._load_documents()

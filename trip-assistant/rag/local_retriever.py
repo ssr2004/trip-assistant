@@ -8,6 +8,8 @@ from typing import Dict, List, Optional
 
 from models.rag import RetrievedChunk
 from rag.embeddings import EmbeddingManager
+from rag.vector_store import InMemoryVectorStore, VectorStore
+from rag.bm25 import BM25Scorer, tokenize as bm25_tokenize
 
 
 class LocalMarkdownRetriever:
@@ -20,16 +22,20 @@ class LocalMarkdownRetriever:
         keyword_weight: float = 0.7,
         vector_weight: float = 0.3,
         vector_min_score: float = 0.08,
+        vector_store: Optional[VectorStore] = None,
     ):
         """初始化检索器。
 
         默认启用向量检索；无真实 Key 时 EmbeddingManager 会使用确定性本地降级。
+        vector_store 为 None 时使用非持久化内存向量库（向后兼容直接构造的场景）；
+        传入持久化 VectorStore 可消除冷启动重复 embed。
         """
         self.embedding_manager = embedding_manager or EmbeddingManager()
         self.enable_vector = enable_vector
         self.keyword_weight = keyword_weight
         self.vector_weight = vector_weight
         self.vector_min_score = vector_min_score
+        self.vector_store = vector_store or InMemoryVectorStore()
 
     def load_documents(
         self,
@@ -102,22 +108,25 @@ class LocalMarkdownRetriever:
         if not documents:
             return []
 
-        query_terms = self._dedupe_terms(self._fallback_terms(query) if terms is None else terms)
-        if not query_terms and not query:
+        query_tokens = self._dedupe_terms(terms if terms is not None else bm25_tokenize(query))
+        if not query_tokens and not query:
             return []
 
         chunks = self._ensure_chunks(documents, max_excerpt_lines)
         vector_scores = self._vector_scores(query, chunks) if self.enable_vector and query else {}
+        docs_tokens = [bm25_tokenize(self._bm25_text(chunk)) for chunk in chunks]
+        bm25_raw = BM25Scorer().score(query_tokens, docs_tokens)
+        max_bm25 = max(bm25_raw) if bm25_raw else 0.0
         scored_results = []
-        for chunk in chunks:
+        for idx, chunk in enumerate(chunks):
             content = chunk.get("content", "")
             searchable_content = self._searchable_content(chunk)
-            matched_terms = [term for term in query_terms if term in searchable_content]
-            keyword_score = self._score(matched_terms, query_terms)
-
-            if keyword_score <= 0 and query:
-                matched_terms = self._weak_character_matches(query, searchable_content)
-                keyword_score = min(len(matched_terms) * 0.02, 0.2) if matched_terms else 0.0
+            keyword_score = (bm25_raw[idx] / max_bm25) if max_bm25 > 0 else 0.0
+            matched_terms = (
+                [term for term in query_tokens if term in searchable_content]
+                if keyword_score > 0
+                else []
+            )
 
             vector_score = vector_scores.get(chunk.get("chunk_id", ""), 0.0)
             score = self._hybrid_score(keyword_score, vector_score)
@@ -224,18 +233,35 @@ class LocalMarkdownRetriever:
         return len(matched_terms) / len(query_terms)
 
     def _vector_scores(self, query: str, chunks: List[Dict]) -> Dict[str, float]:
-        """计算查询与chunk之间的向量相似度。"""
+        """计算查询与chunk之间的向量相似度。
+
+        把 query 与缺失 chunk 的文本合并成一次 embed_batch 调用，
+        再把 chunk 向量写入向量库（命中缓存的 chunk 不重复 embed）。
+        这样每次检索恒为单次 embedding 调用，且 chunk 向量被缓存/持久化。
+        """
         if not chunks:
             return {}
 
-        texts = [query] + [self._searchable_content(chunk) for chunk in chunks]
-        embeddings = self.embedding_manager.embed_batch(texts)
+        items = [(chunk.get("chunk_id", ""), self._searchable_content(chunk)) for chunk in chunks]
+        missing_pairs = [
+            (chunk_id, text)
+            for chunk_id, text in items
+            if chunk_id and chunk_id not in self.vector_store
+        ]
+        batch_texts = [query] + [text for _, text in missing_pairs]
+        embeddings = self.embedding_manager.embed_batch(batch_texts)
         query_embedding = embeddings[0]
-        scores = {}
-        for chunk, chunk_embedding in zip(chunks, embeddings[1:]):
-            raw_score = self._cosine_similarity(query_embedding, chunk_embedding)
-            scores[chunk.get("chunk_id", "")] = max(0.0, raw_score)
-        return scores
+        if missing_pairs:
+            self.vector_store.add(
+                [chunk_id for chunk_id, _ in missing_pairs],
+                embeddings[1:],
+            )
+        scored = self.vector_store.search(query_embedding, top_k=len(items))
+        id_to_score = {chunk_id: score for chunk_id, score in scored}
+        return {
+            chunk_id: max(0.0, id_to_score.get(chunk_id, 0.0))
+            for chunk_id, _ in items
+        }
 
     def _hybrid_score(self, keyword_score: float, vector_score: float) -> float:
         """融合关键词和向量分数，保持关键词命中优先。"""
@@ -255,6 +281,18 @@ class LocalMarkdownRetriever:
         """构建可检索文本。"""
         return "\n".join([
             str(chunk.get("title") or ""),
+            str(chunk.get("section") or ""),
+            str(chunk.get("content") or ""),
+        ])
+
+    def _bm25_text(self, chunk: Dict) -> str:
+        """BM25 索引文本：section + content，不含文档级 title。
+
+        同一文档的 title 在每个 chunk 中都重复，对 chunk 级 BM25 无区分度，
+        反而稀释 body 的判别力（例如"机票退改签政策"让所有 chunk 都命中"退/票"），
+        故 chunk 级稀疏检索只索引 chunk 自身内容。向量检索仍用含 title 的全量文本。
+        """
+        return "\n".join([
             str(chunk.get("section") or ""),
             str(chunk.get("content") or ""),
         ])

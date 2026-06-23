@@ -35,24 +35,6 @@ class MemoryManager:
         self.short_term.add(user_message, ai_message, session_id)
         self.episodic.save_interaction(user_message, ai_message, session_id)
         self.extract_and_save_preferences(user_message, session_id)
-        return
-
-        """
-        保存对话到记忆系统
-
-        Args:
-            user_message: 用户消息
-            ai_message: AI回复
-            session_id: 会话ID
-        """
-        # 保存到短期记忆
-        self.short_term.add(user_message, ai_message, session_id)
-
-        # 保存到情景记忆
-        self.episodic.save_interaction(user_message, ai_message, session_id)
-
-        # 抽取并更新长期用户偏好
-        self.extract_and_save_preferences(user_message, session_id)
 
     async def save_async(self, user_message: str, ai_message: str, session_id: str = "default"):
         """Save conversation and update preferences with rule-first LLM fallback."""

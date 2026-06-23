@@ -2,6 +2,7 @@
 旅行Agent核心模块
 实现主Agent逻辑，协调各个子模块
 """
+import asyncio
 import copy
 import re
 import time
@@ -58,6 +59,8 @@ class TravelAgent:
         workflow.add_node("retrieve_context", self._retrieve_context)
         workflow.add_node("plan_tasks", self._plan_tasks)
         workflow.add_node("execute_tasks", self._execute_tasks)
+        workflow.add_node("critique", self._critique)
+        workflow.add_node("revise_itinerary", self._revise_itinerary_node)
         workflow.add_node("generate_response", self._generate_response)
 
         # 定义边
@@ -65,7 +68,13 @@ class TravelAgent:
         workflow.add_edge("parse_intent", "retrieve_context")
         workflow.add_edge("retrieve_context", "plan_tasks")
         workflow.add_edge("plan_tasks", "execute_tasks")
-        workflow.add_edge("execute_tasks", "generate_response")
+        workflow.add_edge("execute_tasks", "critique")
+        workflow.add_conditional_edges(
+            "critique",
+            self._route_after_critique,
+            {"generate_response": "generate_response", "revise_itinerary": "revise_itinerary"},
+        )
+        workflow.add_edge("revise_itinerary", "critique")
         workflow.add_edge("generate_response", END)
 
         # 编译图
@@ -284,15 +293,14 @@ class TravelAgent:
         results = []
         result_by_task_id = {}
 
-        for task in sorted(tasks, key=lambda item: item.get("priority", 99)):
-            task_type = task.get("task_type", "tool_call")
-            started_at = time.perf_counter()
-            task_result = await self._execute_internal_task(task, task_type, state, started_at)
-            if task_result is None:
-                task_result = await self._execute_tool_task(task, result_by_task_id, started_at)
-
-            results.append(task_result)
-            self._index_task_result(task_result, result_by_task_id)
+        for layer in self._layer_tasks(tasks):
+            ordered = sorted(layer, key=lambda item: item.get("priority", 99))
+            layer_results = await asyncio.gather(
+                *(self._execute_one(task, result_by_task_id, state) for task in ordered)
+            )
+            for task_result in layer_results:
+                results.append(task_result)
+                self._index_task_result(task_result, result_by_task_id)
 
         messages = state.get("messages", [])
         query = messages[-1].content if messages else ""
@@ -304,6 +312,43 @@ class TravelAgent:
         )
         self._collect_itinerary_context(results, session_id)
         return {"task_results": results, "dynamic_rag_context": dynamic_rag_context}
+
+    async def _execute_one(self, task: Dict, result_by_task_id: Dict, state: AgentState) -> Dict:
+        """执行单个任务（内部任务或工具任务），供并发调度使用。"""
+        task_type = task.get("task_type", "tool_call")
+        started_at = time.perf_counter()
+        task_result = await self._execute_internal_task(task, task_type, state, started_at)
+        if task_result is None:
+            task_result = await self._execute_tool_task(task, result_by_task_id, started_at)
+        return task_result
+
+    def _layer_tasks(self, tasks: List[Dict]) -> List[List[Dict]]:
+        """按 depends_on 拓扑分层；同层任务无依赖关系，可并发执行。
+
+        依赖环或缺失依赖时退化为按优先级串行，避免死锁。
+        """
+        task_map = {task.get("task_id"): task for task in tasks if task.get("task_id")}
+        completed: set = set()
+        remaining = list(tasks)
+        layers: List[List[Dict]] = []
+        while remaining:
+            layer = [
+                task
+                for task in remaining
+                if all(
+                    dep in completed or dep not in task_map
+                    for dep in (task.get("depends_on") or [])
+                )
+            ]
+            if not layer:
+                layer = sorted(remaining, key=lambda item: item.get("priority", 99))
+                remaining = []
+            else:
+                remaining = [task for task in remaining if task not in layer]
+            for task in layer:
+                completed.add(task.get("task_id"))
+            layers.append(layer)
+        return layers
 
     async def _execute_internal_task(
         self,
@@ -406,6 +451,114 @@ class TravelAgent:
         )
 
         return {"messages": [AIMessage(content=response)]}
+
+    # ---- 反思自纠闭环（Reflexion：critique → revise → critique） ----
+
+    MAX_CRITIQUE_ATTEMPTS = 2
+
+    async def _critique(self, state: AgentState) -> Dict:
+        """审视行程是否满足约束，产出可解释的 issue 列表（Reflexion 式自纠）。"""
+        attempts = int(state.get("critique_attempts") or 0) + 1
+        task_results = state.get("task_results", [])
+        intent = state.get("intent") or {}
+        issues = self._critique_itinerary(task_results, intent)
+        feedback = {"issues": issues, "passed": not issues, "attempts": attempts}
+        return {"critique_attempts": attempts, "critique_feedback": feedback}
+
+    def _route_after_critique(self, state: AgentState) -> str:
+        """critique 之后路由：通过或达上限→生成回复；否则→修订。"""
+        feedback = state.get("critique_feedback") or {}
+        attempts = int(state.get("critique_attempts") or 0)
+        if feedback.get("passed") or attempts >= self.MAX_CRITIQUE_ATTEMPTS:
+            return "generate_response"
+        return "revise_itinerary"
+
+    async def _revise_itinerary_node(self, state: AgentState) -> Dict:
+        """图节点：根据 critique 反馈重新生成行程，把修订提示注入工具上下文。
+
+        注意：与 executor 用的 ``_revise_itinerary(task, session_id)``（处理
+        revise_itinerary 任务类型）同名但职责不同，故命名为 _node 以区分。
+        """
+        task_results = list(state.get("task_results") or [])
+        feedback = state.get("critique_feedback") or {}
+        issues = feedback.get("issues", [])
+        if not issues:
+            return {"task_results": task_results}
+
+        for idx, task_result in enumerate(task_results):
+            task = task_result.get("task") or {}
+            if task.get("task_type") != "generate_itinerary":
+                continue
+            params = dict(task.get("params") or {})
+            context = dict(params.get("context") or {})
+            context["revision_hint"] = self._format_revision_hint(issues)
+            params["context"] = context
+            tool = self.tool_registry.get("generate_itinerary")
+            if tool is None:
+                continue
+            try:
+                new_result = await tool.execute(**params)
+                new_result = self.tool_registry._normalize_result(new_result)
+            except Exception:
+                continue
+            meta = dict(task_result.get("meta") or {})
+            meta["revised"] = True
+            task_results[idx] = {**task_result, "result": new_result, "meta": meta}
+        return {"task_results": task_results}
+
+    def _critique_itinerary(self, task_results: List[Dict], intent: Dict) -> List[Dict[str, Any]]:
+        """规则校验行程约束：天数匹配、无空天、慢节奏不过密。无行程时返回空（通过）。"""
+        entities = (intent or {}).get("entities", {}) or {}
+        duration = entities.get("duration")
+        preferences = entities.get("preferences", []) or []
+        slow_pace = any(
+            marker in str(preferences)
+            for marker in ("慢节奏", "低强度", "轻松", "亲子", "不累")
+        )
+        issues: List[Dict[str, Any]] = []
+        for task_result in task_results or []:
+            task = task_result.get("task") or {}
+            if task.get("task_type") != "generate_itinerary":
+                continue
+            result = task_result.get("result")
+            result = result if isinstance(result, dict) else {}
+            itinerary = result.get("itinerary") or []
+            if isinstance(duration, int) and len(itinerary) != duration:
+                issues.append({
+                    "type": "day_count_mismatch",
+                    "expected": duration,
+                    "actual": len(itinerary),
+                })
+            for day in itinerary:
+                if not isinstance(day, dict):
+                    continue
+                activities = day.get("activities") or []
+                day_label = day.get("day")
+                if not activities:
+                    issues.append({"type": "empty_day", "day": day_label})
+                elif slow_pace and len(activities) > 5:
+                    issues.append({
+                        "type": "packed_day_for_slow_pace",
+                        "day": day_label,
+                        "activity_count": len(activities),
+                    })
+        return issues
+
+    @staticmethod
+    def _format_revision_hint(issues: List[Dict[str, Any]]) -> str:
+        """把 issue 列表转成给生成器的自然语言修订提示。"""
+        if not issues:
+            return ""
+        parts = []
+        for issue in issues:
+            kind = issue.get("type")
+            if kind == "day_count_mismatch":
+                parts.append(f"行程天数必须等于 {issue.get('expected')} 天，当前为 {issue.get('actual')} 天")
+            elif kind == "empty_day":
+                parts.append(f"第 {issue.get('day')} 天没有活动，需要补充")
+            elif kind == "packed_day_for_slow_pace":
+                parts.append(f"用户偏好慢节奏，第 {issue.get('day')} 天活动过多（{issue.get('activity_count')}），需要精简")
+        return "；".join(parts)
 
     def _build_internal_result(self, task: Dict, data: Any) -> Dict:
         """构建内部任务结果"""

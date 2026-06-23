@@ -86,5 +86,9 @@ class AgentState(TypedDict):
     # 动态RAG上下文
     dynamic_rag_context: NotRequired[Dict]
 
+    # 反思自纠（critique → revise_itinerary 循环）
+    critique_attempts: NotRequired[int]
+    critique_feedback: NotRequired[Dict]
+
     # 会话ID
     session_id: Optional[str]
